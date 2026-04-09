@@ -1,0 +1,45 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Native/build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS / editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# PyTorch and training artifacts
+checkpoints/
+*.pt
+*.pth
+
+# Local dataset outputs
+*.zarr/
+data/processed/
+data/raw/
+
+# Optional logs
+*.log

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ode"
+version = "0.1.0"
+description = "PyTorch tooling for sea surface height and surface current forecasting from NetCDF and Zarr datasets."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "dask[array]>=2024.1.0",
+    "matplotlib>=3.8.0",
+    "netCDF4>=1.6.0",
+    "numpy>=1.26.0",
+    "torch>=2.2.0",
+    "xarray>=2024.1.0",
+    "zarr>=2.17.0",
+]
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+ode = "ode.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

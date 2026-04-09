@@ -1,0 +1,25 @@
+{
+  "data": {
+    "zarr_path": "data/processed/hycom_training_2019q1.zarr",
+    "variables": ["ssh", "u", "v"],
+    "time_dim": "time",
+    "spatial_dims": ["lat", "lon"],
+    "input_steps": 6,
+    "output_steps": 1,
+    "batch_size": 8,
+    "num_workers": 0,
+    "train_fraction": 0.8
+  },
+  "model": {
+    "pca_components": 16,
+    "lstm_hidden_size": 64,
+    "lstm_layers": 2,
+    "lstm_dropout": 0.1
+  },
+  "optimization": {
+    "epochs": 50,
+    "learning_rate": 0.001,
+    "weight_decay": 0.00001,
+    "device": "auto"
+  }
+}
