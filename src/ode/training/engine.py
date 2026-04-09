@@ -51,16 +51,21 @@ def _build_window_dataset(config: TrainingConfig) -> tuple[ForecastWindowDataset
     return window_dataset, str(store_path) if store_path else None
 
 
-def _build_dataloaders(dataset: ForecastWindowDataset, config: TrainingConfig) -> tuple[DataLoader, DataLoader | None]:
-    sample_count = len(dataset)
+def split_sample_indices(sample_count: int, train_fraction: float) -> tuple[list[int], list[int]]:
+    if sample_count <= 0:
+        raise ValueError("sample_count must be positive.")
     if sample_count == 1:
-        train_indices = [0]
-        val_indices: list[int] = []
-    else:
-        train_count = int(sample_count * config.data.train_fraction)
-        train_count = min(max(train_count, 1), sample_count - 1)
-        train_indices = list(range(train_count))
-        val_indices = list(range(train_count, sample_count))
+        return [0], []
+
+    train_count = int(sample_count * train_fraction)
+    train_count = min(max(train_count, 1), sample_count - 1)
+    train_indices = list(range(train_count))
+    val_indices = list(range(train_count, sample_count))
+    return train_indices, val_indices
+
+
+def _build_dataloaders(dataset: ForecastWindowDataset, config: TrainingConfig) -> tuple[DataLoader, DataLoader | None]:
+    train_indices, val_indices = split_sample_indices(len(dataset), config.data.train_fraction)
 
     train_loader = DataLoader(
         Subset(dataset, train_indices),

@@ -12,11 +12,13 @@ from ode.cli import main
 from ode.config import DataConfig, ModelConfig, OptimizationConfig, TrainingConfig
 from ode.data.dataset import ForecastWindowDataset
 from ode.data.hycom import prepare_hycom_dataset
+from ode.data.visualization import animate_surface_dataset
+from ode.inference import plot_point_timeseries, plot_prediction, predict_window
 from ode.data.netcdf import convert_netcdf_to_zarr, open_training_dataset
 from ode.data.pull import _download_to_path, pull_data
 from ode.data.thredds import DEFAULT_THREDDS_VARIABLES, ThreddsSubsetRequest, build_thredds_download_spec, build_thredds_download_specs, resolve_thredds_request_window
 from ode.models.pca_lstm import PCALSTMForecaster, compute_principal_components
-from ode.training.engine import fit
+from ode.training.engine import fit, save_checkpoint
 
 
 def _write_sample_netcdf(path) -> None:
@@ -124,6 +126,143 @@ def test_model_forward_and_training(tmp_path) -> None:
     output = model.forward(__import__("torch").from_numpy(sample))
 
     assert output.shape == (2, 1, 3, 4, 5)
+
+
+def test_predict_window_loads_checkpoint_and_saves_plot(tmp_path) -> None:
+    netcdf_path = tmp_path / "predict.nc"
+    zarr_path = tmp_path / "predict.zarr"
+    checkpoint_path = tmp_path / "predict.pt"
+    figure_path = tmp_path / "predict.png"
+    _write_sample_netcdf(netcdf_path)
+
+    config = TrainingConfig(
+        data=DataConfig(
+            paths=[str(netcdf_path)],
+            zarr_path=str(zarr_path),
+            variables=("ssh", "u", "v"),
+            time_dim="time",
+            spatial_dims=("lat", "lon"),
+            input_steps=3,
+            output_steps=1,
+            batch_size=2,
+            train_fraction=0.75,
+            chunks={"time": 2},
+        ),
+        model=ModelConfig(pca_components=4, lstm_hidden_size=8, lstm_layers=1, lstm_dropout=0.0),
+        optimization=OptimizationConfig(epochs=1, learning_rate=1e-3, device="cpu"),
+    )
+
+    result = fit(config)
+    save_checkpoint(result, config, checkpoint_path)
+
+    prediction = predict_window(checkpoint_path, split="val", sample_index=0, device="cpu")
+
+    assert prediction.predictions.shape == (1, 3, 4, 5)
+    assert prediction.targets.shape == (1, 3, 4, 5)
+    assert prediction.inputs.shape == (3, 3, 4, 5)
+    assert prediction.data_store == str(zarr_path)
+    assert prediction.mse >= 0.0
+    assert len(prediction.input_times) == 3
+    assert len(prediction.target_times) == 1
+
+    saved_path = plot_prediction(prediction, forecast_step=0, figure_path=figure_path)
+    assert saved_path == figure_path
+    assert figure_path.exists()
+
+
+def test_predict_window_supports_autoregressive_lead_steps(tmp_path) -> None:
+    netcdf_path = tmp_path / "lead.nc"
+    zarr_path = tmp_path / "lead.zarr"
+    checkpoint_path = tmp_path / "lead.pt"
+    figure_path = tmp_path / "lead.png"
+    _write_sample_netcdf(netcdf_path)
+
+    config = TrainingConfig(
+        data=DataConfig(
+            paths=[str(netcdf_path)],
+            zarr_path=str(zarr_path),
+            variables=("ssh", "u", "v"),
+            time_dim="time",
+            spatial_dims=("lat", "lon"),
+            input_steps=3,
+            output_steps=1,
+            batch_size=2,
+            train_fraction=0.75,
+            chunks={"time": 2},
+        ),
+        model=ModelConfig(pca_components=4, lstm_hidden_size=8, lstm_layers=1, lstm_dropout=0.0),
+        optimization=OptimizationConfig(epochs=1, learning_rate=1e-3, device="cpu"),
+    )
+
+    result = fit(config)
+    save_checkpoint(result, config, checkpoint_path)
+
+    prediction = predict_window(checkpoint_path, split="all", sample_index=0, lead_steps=7, device="cpu")
+
+    assert prediction.lead_steps == 7
+    assert prediction.predictions.shape == (7, 3, 4, 5)
+    assert prediction.targets.shape == (7, 3, 4, 5)
+    assert len(prediction.target_times) == 7
+
+    saved_path = plot_prediction(prediction, forecast_step=6, figure_path=figure_path)
+    assert saved_path == figure_path
+    assert figure_path.exists()
+
+
+def test_plot_point_timeseries_uses_seeded_random_point(tmp_path) -> None:
+    netcdf_path = tmp_path / "point.nc"
+    zarr_path = tmp_path / "point.zarr"
+    checkpoint_path = tmp_path / "point.pt"
+    figure_path = tmp_path / "point_timeseries.png"
+    _write_sample_netcdf(netcdf_path)
+
+    config = TrainingConfig(
+        data=DataConfig(
+            paths=[str(netcdf_path)],
+            zarr_path=str(zarr_path),
+            variables=("ssh", "u", "v"),
+            time_dim="time",
+            spatial_dims=("lat", "lon"),
+            input_steps=3,
+            output_steps=1,
+            batch_size=2,
+            train_fraction=0.75,
+            chunks={"time": 2},
+        ),
+        model=ModelConfig(pca_components=4, lstm_hidden_size=8, lstm_layers=1, lstm_dropout=0.0),
+        optimization=OptimizationConfig(epochs=1, learning_rate=1e-3, device="cpu"),
+    )
+
+    result = fit(config)
+    save_checkpoint(result, config, checkpoint_path)
+    prediction = predict_window(checkpoint_path, split="val", sample_index=0, lead_steps=3, device="cpu")
+
+    saved_path, selection = plot_point_timeseries(prediction, seed=123, figure_path=figure_path)
+    rng = np.random.default_rng(123)
+    expected_index = (int(rng.integers(4)), int(rng.integers(5)))
+    lat_values = np.linspace(-1.0, 1.0, 4)
+    lon_values = np.linspace(120.0, 122.0, 5)
+
+    assert saved_path == figure_path
+    assert figure_path.exists()
+    assert selection.point_index == expected_index
+    assert selection.point_coordinates == (lat_values[expected_index[0]], lon_values[expected_index[1]])
+
+
+def test_animate_surface_dataset_saves_gif(tmp_path) -> None:
+    raw_dir = tmp_path / "hycom"
+    raw_dir.mkdir()
+    _write_sample_hycom_split_files(raw_dir, "2019-03-01", ["2019-03-01", "2019-03-02"])
+    _write_sample_hycom_split_files(raw_dir, "2019-03-02", ["2019-03-02", "2019-03-03"])
+
+    prepared = prepare_hycom_dataset(raw_dir)
+    animation_path = tmp_path / "raw.gif"
+
+    saved_path = animate_surface_dataset(prepared.dataset, animation_path, fps=2, quiver_stride=1)
+
+    assert saved_path == animation_path
+    assert animation_path.exists()
+    assert animation_path.stat().st_size > 0
 
 
 def test_prepare_hycom_dataset_merges_and_deduplicates_times(tmp_path) -> None:

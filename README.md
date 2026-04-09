@@ -143,6 +143,19 @@ The repository includes a notebook-style Python script at `notebooks/view_hycom_
 
 Run it with VS Code cell execution or as a normal Python script after editing `TARGET_DAY` near the top of the file.
 
+## Animate Raw HYCOM Data
+
+If you want an animation of the observed/raw fields instead of the forecast, use the raw-data animation script. It renders `ssh` with `pcolormesh` and overlays `u` plus `v` as quiver arrows without a quiver colorbar:
+
+```bash
+/Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/animate_raw_hycom.py \
+  --input-dir data/raw/hycom \
+  --start-date 2019-02-01 \
+  --end-date 2019-02-07 \
+  --output-path checkpoints/hycom_raw_animation.gif \
+  --fps 2
+```
+
 ## Convert NetCDF to Zarr
 
 Use the generic converter when your training source is not the HYCOM split daily layout handled by `prepare-hycom`:
@@ -199,6 +212,49 @@ The trainer prints the final train and validation losses and saves a checkpoint 
 - the resolved training device
 - the training config payload
 - the Zarr path used for training
+
+## Inspect One Saved Forecast
+
+Use the checkpoint prediction script to load a saved model, run one forecast window, print the forecast timestamps, and optionally save a quick comparison figure:
+
+```bash
+/Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/predict_checkpoint.py \
+  --checkpoint checkpoints/pca_lstm_hycom_full_rerun.pt \
+  --split val \
+  --sample-index 0 \
+  --forecast-step 0 \
+  --figure-path checkpoints/pca_lstm_hycom_full_rerun_prediction.png
+```
+
+The figure keeps scalar variables such as `ssh` as heatmaps and combines `u` plus `v` into a single surface-current quiver row for target, prediction, and error.
+
+To inspect one random grid point as a time series, save a second plot that shows the lookback window plus actual versus forecast values at that point:
+
+```bash
+/Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/predict_checkpoint.py \
+  --checkpoint checkpoints/pca_lstm_hycom_full_rerun.pt \
+  --split val \
+  --sample-index 0 \
+  --lead-steps 7 \
+  --timeseries-path checkpoints/pca_lstm_hycom_full_rerun_point_timeseries.png \
+  --random-seed 7
+```
+
+That plot picks one spatial point, shows the lookback history used as model input, and overlays the forecast against the actual future values for each variable.
+
+To produce a 7-day lead forecast from the current 1-day model, roll the checkpoint forward autoregressively and plot the seventh day:
+
+```bash
+/Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/predict_checkpoint.py \
+  --checkpoint checkpoints/pca_lstm_hycom_full_rerun.pt \
+  --split val \
+  --sample-index 0 \
+  --lead-steps 7 \
+  --forecast-step 6 \
+  --figure-path checkpoints/pca_lstm_hycom_full_rerun_day7_prediction.png
+```
+
+That command uses each predicted day as part of the next input window until it reaches a 7-day lead time.
 
 The current trainer records one average train loss and one average validation loss per epoch. On the current `hycom_training_2019q1.zarr` store, the full config run completed 50 epochs on `mps` and reached a final train loss near `0.0044` and final validation loss near `0.0160`.
 
