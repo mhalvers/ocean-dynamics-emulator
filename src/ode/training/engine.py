@@ -339,6 +339,8 @@ def fit(config: TrainingConfig) -> TrainingResult:
     )
 
     history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
+    total_epochs = int(config.optimization.epochs)
+    print(f"Starting training for {total_epochs} epochs on device={device} (conv_lstm={config.model.use_conv_lstm})", flush=True)
     for epoch_index in range(config.optimization.epochs):
         teacher_forcing_ratio = _teacher_forcing_ratio_for_epoch(config, epoch_index)
         model.train()
@@ -361,8 +363,10 @@ def fit(config: TrainingConfig) -> TrainingResult:
             optimizer.step()
             train_loss_total += float(loss.item())
             train_batches += 1
-        history["train_loss"].append(train_loss_total / max(train_batches, 1))
+        train_loss = train_loss_total / max(train_batches, 1)
+        history["train_loss"].append(train_loss)
 
+        val_loss: float | None = None
         if val_loader is not None:
             model.eval()
             val_loss_total = 0.0
@@ -375,7 +379,19 @@ def fit(config: TrainingConfig) -> TrainingResult:
                     loss = mse_loss(predictions, targets)
                     val_loss_total += float(loss.item())
                     val_batches += 1
-            history["val_loss"].append(val_loss_total / max(val_batches, 1))
+            val_loss = val_loss_total / max(val_batches, 1)
+            history["val_loss"].append(val_loss)
+
+        if val_loss is None:
+            print(
+                f"Epoch {epoch_index + 1}/{total_epochs} - train_loss={train_loss:.6f} tf_ratio={teacher_forcing_ratio:.3f}",
+                flush=True,
+            )
+        else:
+            print(
+                f"Epoch {epoch_index + 1}/{total_epochs} - train_loss={train_loss:.6f} val_loss={val_loss:.6f} tf_ratio={teacher_forcing_ratio:.3f}",
+                flush=True,
+            )
 
     return TrainingResult(model=model, history=history, device=device, zarr_path=zarr_path)
 

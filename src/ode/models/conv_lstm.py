@@ -103,11 +103,12 @@ class ConvLSTMForecaster(nn.Module):
             [ConvLSTMCell(in_channels if i == 0 else lstm_hidden_size, lstm_hidden_size, kernel_size) for i in range(lstm_layers)]
         )
 
-        if autoregressive_decoder:
-            self.decoder_cells = nn.ModuleList(
-                [ConvLSTMCell(out_channels if i == 0 else lstm_hidden_size, lstm_hidden_size, kernel_size) for i in range(lstm_layers)]
-            )
-            self.output_conv = nn.Conv2d(lstm_hidden_size, out_channels, kernel_size=1)
+        decoder_in_channels = out_channels
+        self.decoder_cells = nn.ModuleList(
+            [ConvLSTMCell(decoder_in_channels if i == 0 else lstm_hidden_size, lstm_hidden_size, kernel_size) for i in range(lstm_layers)]
+        ) if autoregressive_decoder else None
+
+        self.output_conv = nn.Conv2d(lstm_hidden_size, out_channels, kernel_size=1)
 
     def _normalize_inputs(self, inputs: torch.Tensor) -> torch.Tensor:
         batch, steps, channels, height, width = inputs.shape
@@ -135,7 +136,7 @@ class ConvLSTMForecaster(nn.Module):
         residual_target_indices = torch.nonzero(residual_mask, as_tuple=False).flatten()
         for target_index in residual_target_indices.tolist():
             input_index = int(self.target_residual_input_indices[target_index].item())
-            baseline = baseline_inputs[:, input_index:input_index+1, :, :]
+            baseline = baseline_inputs[:, input_index:input_index+1, :, :].unsqueeze(1)
             outputs[:, :, target_index:target_index+1, :, :] = outputs[:, :, target_index:target_index+1, :, :] - baseline
         return outputs
 
@@ -149,7 +150,7 @@ class ConvLSTMForecaster(nn.Module):
         residual_target_indices = torch.nonzero(residual_mask, as_tuple=False).flatten()
         for target_index in residual_target_indices.tolist():
             input_index = int(self.target_residual_input_indices[target_index].item())
-            baseline = baseline_inputs[:, input_index:input_index+1, :, :]
+            baseline = baseline_inputs[:, input_index:input_index+1, :, :].unsqueeze(1)
             outputs[:, :, target_index:target_index+1, :, :] = outputs[:, :, target_index:target_index+1, :, :] + baseline
         return outputs
 
@@ -170,42 +171,52 @@ class ConvLSTMForecaster(nn.Module):
 
     def _decode_autoregressive(
         self,
-        encoded_sequence: list[torch.Tensor],
+        inputs: torch.Tensor,
         hidden_state: list[list[torch.Tensor]],
         teacher_forcing_targets: torch.Tensor | None = None,
         teacher_forcing_ratio: float = 1.0,
     ) -> torch.Tensor:
-        batch_size, _, height, width = encoded_sequence[0].shape
-        h, c = hidden_state
-        decoder_h = h.copy()
-        decoder_c = c.copy()
+        batch_size, _, height, width = hidden_state[0][0].shape
+        h = list(hidden_state[0])
+        c = list(hidden_state[1])
 
-        predictions = []
+        # Pre-compute normalized, residual-removed teacher forcing sequence
         teacher_forcing_sequence = None
         if teacher_forcing_targets is not None:
-            adjusted_targets = self._remove_residual_baseline(encoded_sequence[0].unsqueeze(1).expand(-1, self.input_steps, -1, -1, -1), teacher_forcing_targets)
-            teacher_forcing_sequence = adjusted_targets
+            # Remove residual baseline, then normalize into the same space the decoder predicts
+            adjusted = self._remove_residual_baseline(inputs, teacher_forcing_targets)
+            batch, steps, channels, h_size, w_size = adjusted.shape
+            flat = adjusted.reshape(batch * steps, channels, h_size, w_size)
+            mean = self.target_channel_mean.view(1, channels, 1, 1)
+            std = self.target_channel_std.view(1, channels, 1, 1)
+            teacher_forcing_sequence = ((flat - mean) / std).reshape(batch, steps, channels, h_size, w_size)
+
+        device = h[0].device
+        dtype = h[0].dtype
+        predictions = []
+        decoder_input = torch.zeros(batch_size, self.out_channels, height, width, device=device, dtype=dtype)
 
         for step in range(self.output_steps):
-            if teacher_forcing_sequence is not None and step < self.output_steps - 1:
-                if teacher_forcing_ratio >= 1.0:
-                    x = teacher_forcing_sequence[:, step, :, :, :]
-                elif teacher_forcing_ratio <= 0.0:
-                    x = predictions[-1] if predictions else torch.zeros(batch_size, self.out_channels, height, width, device=encoded_sequence[0].device, dtype=encoded_sequence[0].dtype)
-                else:
-                    teacher_sample = teacher_forcing_sequence[:, step, :, :, :]
-                    model_sample = predictions[-1] if predictions else torch.zeros(batch_size, self.out_channels, height, width, device=encoded_sequence[0].device, dtype=encoded_sequence[0].dtype)
-                    use_teacher = torch.rand((batch_size, 1, 1, 1), device=encoded_sequence[0].device) < teacher_forcing_ratio
-                    x = torch.where(use_teacher, teacher_sample, model_sample)
-            else:
-                x = predictions[-1] if predictions else torch.zeros(batch_size, self.out_channels, height, width, device=encoded_sequence[0].device, dtype=encoded_sequence[0].dtype)
-
+            x = decoder_input
             for layer_idx in range(self.lstm_layers):
-                decoder_h[layer_idx], (decoder_h[layer_idx], decoder_c[layer_idx]) = self.decoder_cells[layer_idx](x, (decoder_h[layer_idx], decoder_c[layer_idx]))
-                x = decoder_h[layer_idx]
+                h[layer_idx], (h[layer_idx], c[layer_idx]) = self.decoder_cells[layer_idx](x, (h[layer_idx], c[layer_idx]))
+                x = h[layer_idx]
 
             pred = self.output_conv(x)
             predictions.append(pred)
+
+            # Determine next decoder input (in normalized residual space)
+            if teacher_forcing_sequence is not None and step + 1 < self.output_steps:
+                teacher_frame = teacher_forcing_sequence[:, step, :, :, :]
+                if teacher_forcing_ratio >= 1.0:
+                    decoder_input = teacher_frame
+                elif teacher_forcing_ratio <= 0.0:
+                    decoder_input = pred.detach()
+                else:
+                    use_teacher = torch.rand(batch_size, 1, 1, 1, device=device) < teacher_forcing_ratio
+                    decoder_input = torch.where(use_teacher, teacher_frame, pred.detach())
+            else:
+                decoder_input = pred.detach()
 
         return torch.stack(predictions, dim=1)
 
@@ -227,15 +238,27 @@ class ConvLSTMForecaster(nn.Module):
             raise ValueError(f"Expected spatial shape {self.spatial_shape}, received {(height, width)}.")
 
         normalized_inputs = self._normalize_inputs(inputs)
-        adjusted_inputs = self._remove_residual_baseline(inputs, normalized_inputs)
+        # Remove the per-channel persistence baseline from input before encoding
+        # inputs[:, -1, ssh_channel] is subtracted from the normalized ssh inputs
+        # so the encoder sees residual corrections, not raw absolute values
+        residual_mask = self.target_residual_input_indices >= 0
+        if torch.any(residual_mask):
+            for target_index in torch.nonzero(residual_mask, as_tuple=False).flatten().tolist():
+                input_index = int(self.target_residual_input_indices[target_index].item())
+                baseline = inputs[:, -1, input_index:input_index+1, :, :]
+                normalized_baseline = (baseline - self.input_channel_mean[input_index]) / self.input_channel_std[input_index]
+                normalized_inputs = normalized_inputs.clone()
+                normalized_inputs[:, :, input_index:input_index+1, :, :] = (
+                    normalized_inputs[:, :, input_index:input_index+1, :, :] - normalized_baseline.unsqueeze(1)
+                )
 
-        encoded_sequence, hidden_state = self._encode(adjusted_inputs)
+        encoder_outputs, hidden_state = self._encode(normalized_inputs)
 
         if self.autoregressive_decoder:
-            predicted = self._decode_autoregressive(encoded_sequence, hidden_state, teacher_forcing_targets, teacher_forcing_ratio)
+            predicted_normalized = self._decode_autoregressive(inputs, hidden_state, teacher_forcing_targets, teacher_forcing_ratio)
         else:
-            last_hidden = encoded_sequence[-1]
-            predicted = self.output_conv(last_hidden).unsqueeze(1).expand(-1, self.output_steps, -1, -1, -1)
+            last_hidden = encoder_outputs[-1]
+            predicted_normalized = self.output_conv(last_hidden).unsqueeze(1).expand(-1, self.output_steps, -1, -1, -1)
 
-        denormalized = self._denormalize_targets(predicted)
+        denormalized = self._denormalize_targets(predicted_normalized)
         return self._add_residual_baseline(inputs, denormalized)
