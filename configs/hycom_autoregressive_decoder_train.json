@@ -20,7 +20,8 @@
     "pca_components": 32,
     "lstm_hidden_size": 128,
     "lstm_layers": 2,
-    "lstm_dropout": 0.1
+    "lstm_dropout": 0.1,
+    "autoregressive_decoder": true
   },
   "optimization": {
     "epochs": 100,

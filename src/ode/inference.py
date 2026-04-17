@@ -4,12 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
 import numpy as np
 import torch
 
 from ode.config import TrainingConfig
 from ode.models.pca_lstm import PCALSTMForecaster
-from ode.training.engine import _build_window_dataset, _fit_pca_statistics, _resolve_device, split_sample_indices
+from ode.training.engine import _build_window_dataset, _fit_pca_statistics, _resolve_device, resolve_residual_target_input_indices, resolve_split_sample_indices
 
 
 @dataclass(slots=True)
@@ -21,7 +22,8 @@ class ForecastPrediction:
     relative_sample_index: int
     absolute_sample_index: int
     data_store: str | None
-    variables: tuple[str, ...]
+    input_variables: tuple[str, ...]
+    target_variables: tuple[str, ...]
     spatial_dims: tuple[str, ...]
     spatial_coord_values: tuple[np.ndarray, ...]
     input_times: np.ndarray
@@ -54,16 +56,6 @@ def _resolve_lead_steps(config: TrainingConfig, lead_steps: int | None) -> int:
     return resolved
 
 
-def _resolve_rollout_index(total_timesteps: int, input_steps: int, lead_steps: int, train_fraction: float, split: str, sample_index: int) -> tuple[int, int]:
-    sample_count = total_timesteps - input_steps - lead_steps + 1
-    if sample_count <= 0:
-        raise ValueError(
-            "Not enough timesteps to make the requested forecast window with "
-            f"input_steps={input_steps} and lead_steps={lead_steps}."
-        )
-    return _resolve_prediction_index(sample_count, train_fraction, split, sample_index)
-
-
 def _roll_forward(model: PCALSTMForecaster, inputs: torch.Tensor, lead_steps: int, device: str) -> torch.Tensor:
     current_window = inputs.to(device)
     predicted_chunks: list[torch.Tensor] = []
@@ -78,6 +70,14 @@ def _roll_forward(model: PCALSTMForecaster, inputs: torch.Tensor, lead_steps: in
 
     return torch.cat(predicted_chunks, dim=0)[:lead_steps]
 
+
+def _resolve_current_quiver_settings(*field_pairs: tuple[np.ndarray, np.ndarray]) -> tuple[float, float, float]:
+    magnitude_limit = max(float(np.hypot(u_field, v_field).max()) for u_field, v_field in field_pairs)
+    if not np.isfinite(magnitude_limit) or magnitude_limit <= 0.0:
+        magnitude_limit = 1.0
+    return 0.0, magnitude_limit, magnitude_limit
+
+
 def _plot_quiver_panel(
     ax,
     *,
@@ -87,6 +87,8 @@ def _plot_quiver_panel(
     x_label: str,
     y_label: str,
     cmap: str,
+    color_norm: Normalize,
+    quiver_scale: float,
 ):
     height, width = u_field.shape
     stride = max(1, min(height, width) // 20)
@@ -102,9 +104,10 @@ def _plot_quiver_panel(
         v_sample,
         magnitude,
         cmap=cmap,
+        norm=color_norm,
         angles="xy",
         scale_units="xy",
-        scale=None,
+        scale=quiver_scale,
     )
     ax.set_xlim(-0.5, width - 0.5)
     ax.set_ylim(-0.5, height - 0.5)
@@ -138,39 +141,50 @@ def _resolve_point_selection(
         coordinates.append(coord_value.item() if coord_value.ndim == 0 else coord_value)
     return PointTimeseriesSelection(point_index=resolved_point, point_coordinates=(coordinates[0], coordinates[1]))
 
-def _resolve_prediction_index(sample_count: int, train_fraction: float, split: str, sample_index: int) -> tuple[int, int]:
+def _resolve_prediction_index(split_indices: list[int], split: str, sample_index: int) -> tuple[int, int]:
     if split == "train":
-        split_indices = split_sample_indices(sample_count, train_fraction)[0]
+        resolved_split_indices = split_indices
     elif split == "val":
-        split_indices = split_sample_indices(sample_count, train_fraction)[1]
+        resolved_split_indices = split_indices
     elif split == "all":
-        split_indices = list(range(sample_count))
+        resolved_split_indices = split_indices
     else:
         raise ValueError("split must be one of: train, val, all.")
 
-    if not split_indices:
+    if not resolved_split_indices:
         raise ValueError(f"The {split} split is empty for the configured dataset.")
 
-    resolved_index = sample_index if sample_index >= 0 else len(split_indices) + sample_index
-    if resolved_index < 0 or resolved_index >= len(split_indices):
+    resolved_index = sample_index if sample_index >= 0 else len(resolved_split_indices) + sample_index
+    if resolved_index < 0 or resolved_index >= len(resolved_split_indices):
         raise IndexError(
-            f"sample_index={sample_index} is out of range for the {split} split with {len(split_indices)} samples."
+            f"sample_index={sample_index} is out of range for the {split} split with {len(resolved_split_indices)} samples."
         )
-    return resolved_index, split_indices[resolved_index]
+    return resolved_index, resolved_split_indices[resolved_index]
 
 
 def _build_model_from_checkpoint(config: TrainingConfig, dataset, checkpoint: dict, device: str) -> PCALSTMForecaster:
-    pca_mean, pca_components, _ = _fit_pca_statistics(dataset, config)
+    input_stats, target_stats = _fit_pca_statistics(dataset, config)
+    input_pca_mean, input_pca_components, _, input_channel_mean, input_channel_std = input_stats
+    target_pca_mean, target_pca_components, _, target_channel_mean, target_channel_std = target_stats
     model = PCALSTMForecaster(
         input_steps=config.data.input_steps,
-        in_channels=len(config.data.variables),
-        spatial_shape=tuple(int(dataset.array.sizes[dim]) for dim in dataset.spatial_dims),
+        in_channels=len(dataset.input_variables),
+        out_channels=len(dataset.target_variables),
+        spatial_shape=tuple(int(dataset.input_array.sizes[dim]) for dim in dataset.spatial_dims),
         output_steps=config.data.output_steps,
-        pca_mean=pca_mean,
-        pca_components=pca_components,
+        input_pca_mean=input_pca_mean,
+        input_pca_components=input_pca_components,
+        input_channel_mean=input_channel_mean,
+        input_channel_std=input_channel_std,
+        target_pca_mean=target_pca_mean,
+        target_pca_components=target_pca_components,
+        target_channel_mean=target_channel_mean,
+        target_channel_std=target_channel_std,
+        target_residual_input_indices=resolve_residual_target_input_indices(dataset, config),
         lstm_hidden_size=config.model.lstm_hidden_size,
         lstm_layers=config.model.lstm_layers,
         lstm_dropout=config.model.lstm_dropout,
+        autoregressive_decoder=config.model.autoregressive_decoder,
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
@@ -190,20 +204,34 @@ def predict_window(
     config = TrainingConfig.from_dict(checkpoint["config"])
     dataset, data_store = _build_window_dataset(config)
     resolved_lead_steps = _resolve_lead_steps(config, lead_steps)
-    time_values = np.asarray(dataset.array[dataset.time_dim].values)
-    relative_sample_index, absolute_sample_index = _resolve_rollout_index(
-        int(dataset.array.sizes[dataset.time_dim]),
-        config.data.input_steps,
-        resolved_lead_steps,
-        config.data.train_fraction,
-        split,
-        sample_index,
-    )
+    requires_autoregressive_rollout = resolved_lead_steps > config.data.output_steps
+    if requires_autoregressive_rollout and dataset.input_variables != dataset.target_variables:
+        raise ValueError(
+            "Autoregressive rollout beyond the direct forecast horizon requires target_variables to match input_variables."
+        )
+
+    required_horizon = max(config.data.output_steps, resolved_lead_steps)
+    time_values = np.asarray(dataset.input_array[dataset.time_dim].values)
+    if split == "all":
+        sample_count = int(dataset.input_array.sizes[dataset.time_dim]) - config.data.input_steps - required_horizon + 1
+        if sample_count <= 0:
+            raise ValueError(
+                "Not enough timesteps to make the requested forecast window with "
+                f"input_steps={config.data.input_steps} and lead_steps={required_horizon}."
+            )
+        split_indices = list(range(sample_count))
+    elif split == "train":
+        split_indices = resolve_split_sample_indices(dataset, config, output_steps=required_horizon)[0]
+    elif split == "val":
+        split_indices = resolve_split_sample_indices(dataset, config, output_steps=required_horizon)[1]
+    else:
+        raise ValueError("split must be one of: train, val, all.")
+    relative_sample_index, absolute_sample_index = _resolve_prediction_index(split_indices, split, sample_index)
     resolved_device = _resolve_device(device)
     model = _build_model_from_checkpoint(config, dataset, checkpoint, resolved_device)
 
-    input_slice = dataset.array.isel({dataset.time_dim: slice(absolute_sample_index, absolute_sample_index + config.data.input_steps)})
-    target_slice = dataset.array.isel(
+    input_slice = dataset.input_array.isel({dataset.time_dim: slice(absolute_sample_index, absolute_sample_index + config.data.input_steps)})
+    target_slice = dataset.target_array.isel(
         {
             dataset.time_dim: slice(
                 absolute_sample_index + config.data.input_steps,
@@ -218,7 +246,11 @@ def predict_window(
         absolute_sample_index + config.data.input_steps : absolute_sample_index + config.data.input_steps + resolved_lead_steps
     ]
 
-    predictions = _roll_forward(model, inputs, resolved_lead_steps, resolved_device)
+    if requires_autoregressive_rollout:
+        predictions = _roll_forward(model, inputs, resolved_lead_steps, resolved_device)
+    else:
+        with torch.no_grad():
+            predictions = model(inputs.unsqueeze(0).to(resolved_device)).cpu().squeeze(0)[:resolved_lead_steps]
 
     mse = float(torch.mean((predictions - targets) ** 2).item())
     return ForecastPrediction(
@@ -229,9 +261,10 @@ def predict_window(
         relative_sample_index=relative_sample_index,
         absolute_sample_index=absolute_sample_index,
         data_store=data_store,
-        variables=tuple(config.data.variables),
+        input_variables=tuple(dataset.input_variables),
+        target_variables=tuple(dataset.target_variables),
         spatial_dims=tuple(dataset.spatial_dims),
-        spatial_coord_values=tuple(np.asarray(dataset.array[dim].values) for dim in dataset.spatial_dims),
+        spatial_coord_values=tuple(np.asarray(dataset.input_array[dim].values) for dim in dataset.spatial_dims),
         input_times=input_times,
         target_times=target_times,
         inputs=inputs,
@@ -254,9 +287,9 @@ def plot_prediction(
     targets = prediction.targets[forecast_step].numpy()
     outputs = prediction.predictions[forecast_step].numpy()
     errors = outputs - targets
-    variable_to_index = {name: index for index, name in enumerate(prediction.variables)}
+    variable_to_index = {name: index for index, name in enumerate(prediction.target_variables)}
     has_currents = "u" in variable_to_index and "v" in variable_to_index
-    scalar_variables = [name for name in prediction.variables if name not in {"u", "v"}]
+    scalar_variables = [name for name in prediction.target_variables if name not in {"u", "v"}]
     row_count = len(scalar_variables) + int(has_currents)
     figure, axes = plt.subplots(row_count, 3, figsize=(12, 4 * row_count), constrained_layout=True, squeeze=False)
 
@@ -299,6 +332,12 @@ def plot_prediction(
         v_index = variable_to_index["v"]
         x_label = prediction.spatial_dims[1]
         y_label = prediction.spatial_dims[0]
+        current_color_min, current_color_max, current_quiver_scale = _resolve_current_quiver_settings(
+            (targets[u_index], targets[v_index]),
+            (outputs[u_index], outputs[v_index]),
+            (errors[u_index], errors[v_index]),
+        )
+        current_color_norm = Normalize(vmin=current_color_min, vmax=current_color_max)
 
         target_quiver = _plot_quiver_panel(
             axes[row_index][0],
@@ -308,6 +347,8 @@ def plot_prediction(
             x_label=x_label,
             y_label=y_label,
             cmap="viridis",
+            color_norm=current_color_norm,
+            quiver_scale=current_quiver_scale,
         )
         prediction_quiver = _plot_quiver_panel(
             axes[row_index][1],
@@ -317,6 +358,8 @@ def plot_prediction(
             x_label=x_label,
             y_label=y_label,
             cmap="viridis",
+            color_norm=current_color_norm,
+            quiver_scale=current_quiver_scale,
         )
         error_quiver = _plot_quiver_panel(
             axes[row_index][2],
@@ -326,6 +369,8 @@ def plot_prediction(
             x_label=x_label,
             y_label=y_label,
             cmap="magma",
+            color_norm=current_color_norm,
+            quiver_scale=current_quiver_scale,
         )
         figure.colorbar(target_quiver, ax=axes[row_index][0])
         figure.colorbar(prediction_quiver, ax=axes[row_index][1])
@@ -357,40 +402,59 @@ def plot_point_timeseries(
 ) -> tuple[Path | None, PointTimeseriesSelection]:
     selection = _resolve_point_selection(prediction, point_index=point_index, seed=seed)
     row_index, column_index = selection.point_index
-    variable_to_index = {name: index for index, name in enumerate(prediction.variables)}
+    input_variable_to_index = {name: index for index, name in enumerate(prediction.input_variables)}
+    target_variable_to_index = {name: index for index, name in enumerate(prediction.target_variables)}
     lookback_steps = prediction.inputs.shape[0]
     forecast_positions = np.arange(lookback_steps, lookback_steps + prediction.lead_steps)
     history_positions = np.arange(lookback_steps)
     tick_positions = np.concatenate([history_positions, forecast_positions])
     tick_labels = [format_time_value(value) for value in prediction.input_times] + [format_time_value(value) for value in prediction.target_times]
 
-    figure, axes = plt.subplots(len(prediction.variables), 1, figsize=(12, 3.5 * len(prediction.variables)), sharex=True, constrained_layout=True)
-    if len(prediction.variables) == 1:
+    figure, axes = plt.subplots(
+        len(prediction.target_variables),
+        1,
+        figsize=(12, 3.5 * len(prediction.target_variables)),
+        sharex=True,
+        constrained_layout=True,
+    )
+    if len(prediction.target_variables) == 1:
         axes = [axes]
 
-    for axis, variable_name in zip(axes, prediction.variables):
-        variable_index = variable_to_index[variable_name]
-        lookback_series = prediction.inputs[:, variable_index, row_index, column_index].numpy()
-        actual_series = prediction.targets[:, variable_index, row_index, column_index].numpy()
-        forecast_series = prediction.predictions[:, variable_index, row_index, column_index].numpy()
+    for axis, variable_name in zip(axes, prediction.target_variables):
+        target_index = target_variable_to_index[variable_name]
+        actual_series = prediction.targets[:, target_index, row_index, column_index].numpy()
+        forecast_series = prediction.predictions[:, target_index, row_index, column_index].numpy()
 
-        axis.plot(history_positions, lookback_series, color="0.2", marker="o", label="lookback")
-        axis.plot(
-            np.concatenate([[history_positions[-1]], forecast_positions]),
-            np.concatenate([[lookback_series[-1]], actual_series]),
-            color="tab:blue",
-            marker="o",
-            label="actual",
-        )
-        axis.plot(
-            np.concatenate([[history_positions[-1]], forecast_positions]),
-            np.concatenate([[lookback_series[-1]], forecast_series]),
-            color="tab:orange",
-            marker="o",
-            linestyle="--",
-            label="forecast",
-        )
-        axis.axvline(history_positions[-1], color="0.5", linestyle=":")
+        if variable_name in input_variable_to_index:
+            input_index = input_variable_to_index[variable_name]
+            lookback_series = prediction.inputs[:, input_index, row_index, column_index].numpy()
+            axis.plot(history_positions, lookback_series, color="0.2", marker="o", label="lookback")
+            axis.plot(
+                np.concatenate([[history_positions[-1]], forecast_positions]),
+                np.concatenate([[lookback_series[-1]], actual_series]),
+                color="tab:blue",
+                marker="o",
+                label="actual",
+            )
+            axis.plot(
+                np.concatenate([[history_positions[-1]], forecast_positions]),
+                np.concatenate([[lookback_series[-1]], forecast_series]),
+                color="tab:orange",
+                marker="o",
+                linestyle="--",
+                label="forecast",
+            )
+            axis.axvline(history_positions[-1], color="0.5", linestyle=":")
+        else:
+            axis.plot(forecast_positions, actual_series, color="tab:blue", marker="o", label="actual")
+            axis.plot(
+                forecast_positions,
+                forecast_series,
+                color="tab:orange",
+                marker="o",
+                linestyle="--",
+                label="forecast",
+            )
         axis.set_ylabel(variable_name)
         axis.legend(loc="best")
 
@@ -418,6 +482,7 @@ def plot_point_timeseries(
 __all__ = [
     "ForecastPrediction",
     "PointTimeseriesSelection",
+    "_resolve_current_quiver_settings",
     "format_time_value",
     "plot_point_timeseries",
     "plot_prediction",

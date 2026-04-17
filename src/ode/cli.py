@@ -8,6 +8,7 @@ from ode.data.hycom import prepare_hycom_zarr
 from ode.data.netcdf import convert_netcdf_to_zarr
 from ode.data.pull import pull_data
 from ode.data.thredds import DEFAULT_THREDDS_VARIABLES, ThreddsSubsetRequest, pull_thredds_catalog, resolve_thredds_request_window
+from ode.experiments import record_existing_checkpoint, run_tracked_experiment
 from ode.training.engine import fit, save_checkpoint
 
 
@@ -85,7 +86,14 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--config", default=None, help="Optional JSON config file.")
     train_parser.add_argument("--input", nargs="*", default=[], help="Input NetCDF or Zarr paths.")
     train_parser.add_argument("--zarr-path", default=None, help="Local Zarr store used for training.")
-    train_parser.add_argument("--variable", action="append", default=[], help="Training variable name.")
+    train_parser.add_argument("--variable", action="append", default=[], help="Input variable name. Defaults to ssh, u, and v.")
+    train_parser.add_argument("--target-variable", action="append", default=[], help="Target variable name. Defaults to the input variables when omitted.")
+    train_parser.add_argument(
+        "--residual-target-variable",
+        action="append",
+        default=[],
+        help="Target variable trained as a residual over the last input frame persistence baseline.",
+    )
     train_parser.add_argument("--time-dim", default="time", help="Dataset time dimension.")
     train_parser.add_argument("--spatial-dim", action="append", default=[], help="Spatial dimensions in order.")
     train_parser.add_argument("--input-steps", type=int, default=6, help="Number of input timesteps.")
@@ -93,17 +101,53 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--batch-size", type=int, default=4, help="Training batch size.")
     train_parser.add_argument("--num-workers", type=int, default=0, help="PyTorch dataloader workers.")
     train_parser.add_argument("--train-fraction", type=float, default=0.8, help="Leading fraction of windows used for training.")
+    train_parser.add_argument("--train-end-date", default=None, help="Optional latest target date included in the training split, as YYYY-MM-DD.")
+    train_parser.add_argument("--val-start-date", default=None, help="Optional earliest target date included in the validation split, as YYYY-MM-DD.")
+    train_parser.add_argument("--val-end-date", default=None, help="Optional latest target date included in the validation split, as YYYY-MM-DD.")
     train_parser.add_argument("--chunk", action="append", default=[], help="Chunk specification, e.g. time=24.")
     train_parser.add_argument("--engine", default=None, help="Optional xarray backend engine.")
     train_parser.add_argument("--pca-components", type=int, default=32, help="Number of leading principal components used as the LSTM state input.")
     train_parser.add_argument("--lstm-hidden-size", type=int, default=128, help="Hidden size of the PCA-sequence LSTM.")
     train_parser.add_argument("--lstm-layers", type=int, default=2, help="Number of stacked LSTM layers.")
     train_parser.add_argument("--lstm-dropout", type=float, default=0.0, help="Dropout between LSTM layers when lstm-layers > 1.")
+    train_parser.add_argument("--autoregressive-decoder", action="store_true", help="Use an autoregressive decoder LSTM over target PCA coefficients instead of a one-shot multi-step readout.")
     train_parser.add_argument("--epochs", type=int, default=10, help="Training epochs.")
     train_parser.add_argument("--learning-rate", type=float, default=1e-3, help="Optimizer learning rate.")
     train_parser.add_argument("--weight-decay", type=float, default=1e-5, help="Optimizer weight decay.")
     train_parser.add_argument("--device", default="auto", help="Training device: auto, cpu, cuda, or mps.")
     train_parser.add_argument("--checkpoint-path", default=None, help="Optional checkpoint output path.")
+
+    experiment_parser = subparsers.add_parser(
+        "experiment",
+        help="Train and record a benchmarked experiment, or register an existing checkpoint.",
+    )
+    experiment_parser.add_argument("--config", default=None, help="Path to the training config JSON file.")
+    experiment_parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Optional path to an existing checkpoint to register instead of retraining.",
+    )
+    experiment_parser.add_argument(
+        "--benchmark",
+        default="benchmarks/ssh_standard_windows_v1.json",
+        help="Path to the benchmark JSON spec.",
+    )
+    experiment_parser.add_argument(
+        "--runs-dir",
+        default="experiments/runs",
+        help="Directory where per-run artifacts are stored.",
+    )
+    experiment_parser.add_argument(
+        "--registry",
+        default="experiments/registry.jsonl",
+        help="Path to the experiment registry JSONL file.",
+    )
+    experiment_parser.add_argument("--device", default="auto", help="Evaluation device for the benchmark step.")
+    experiment_parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Optional explicit run id. Defaults to a timestamped id from the config or checkpoint stem.",
+    )
 
     return parser
 
@@ -113,12 +157,17 @@ def _build_training_config(args: argparse.Namespace) -> TrainingConfig:
         return load_training_config(args.config)
 
     variables = tuple(args.variable) if args.variable else ("ssh", "u", "v")
+    target_variables = tuple(args.target_variable) if args.target_variable else None
+    residual_targets = tuple(args.residual_target_variable) if args.residual_target_variable else ()
     spatial_dims = tuple(args.spatial_dim) if args.spatial_dim else None
     return TrainingConfig(
         data=DataConfig(
             paths=list(args.input),
             zarr_path=args.zarr_path,
             variables=variables,
+            input_variables=variables,
+            target_variables=target_variables,
+            residual_targets=residual_targets,
             time_dim=args.time_dim,
             spatial_dims=spatial_dims,
             input_steps=args.input_steps,
@@ -126,6 +175,9 @@ def _build_training_config(args: argparse.Namespace) -> TrainingConfig:
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_fraction=args.train_fraction,
+            train_end_date=args.train_end_date,
+            val_start_date=args.val_start_date,
+            val_end_date=args.val_end_date,
             chunks=_parse_chunks(args.chunk),
             engine=args.engine,
         ),
@@ -134,6 +186,7 @@ def _build_training_config(args: argparse.Namespace) -> TrainingConfig:
             lstm_hidden_size=args.lstm_hidden_size,
             lstm_layers=args.lstm_layers,
             lstm_dropout=args.lstm_dropout,
+            autoregressive_decoder=args.autoregressive_decoder,
         ),
         optimization=OptimizationConfig(
             epochs=args.epochs,
@@ -223,6 +276,37 @@ def main() -> None:
             print(f"Saved checkpoint to {checkpoint}")
         if result.zarr_path:
             print(f"Training data store: {result.zarr_path}")
+        return
+
+    if args.command == "experiment":
+        if args.checkpoint:
+            manifest = record_existing_checkpoint(
+                args.checkpoint,
+                config_path=args.config,
+                benchmark_path=args.benchmark,
+                runs_dir=args.runs_dir,
+                registry_path=args.registry,
+                device=args.device,
+                run_id=args.run_id,
+            )
+        else:
+            if not args.config:
+                parser.error("the following arguments are required for experiment training: --config")
+            manifest = run_tracked_experiment(
+                args.config,
+                benchmark_path=args.benchmark,
+                runs_dir=args.runs_dir,
+                registry_path=args.registry,
+                device=args.device,
+                run_id=args.run_id,
+            )
+        print(f"Run id: {manifest['run_id']}")
+        print(f"Run directory: {manifest['run_dir']}")
+        print(f"Checkpoint: {manifest['checkpoint_path']}")
+        if manifest["benchmark_overall_mse"] is not None:
+            print(f"Benchmark overall MSE: {manifest['benchmark_overall_mse']:.6f}")
+        if manifest["benchmark_ssh_mse"] is not None:
+            print(f"Benchmark SSH MSE: {manifest['benchmark_ssh_mse']:.6f}")
         return
 
     parser.error(f"Unknown command: {args.command}")

@@ -1,0 +1,487 @@
+{
+  "benchmark_name": "ssh_standard_windows_v1",
+  "benchmark_path": "benchmarks/ssh_standard_windows_v1.json",
+  "checkpoint_path": "checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03.pt",
+  "evaluated_data_store": "data/processed/hycom_training_2014-04-02_to_2019-03-03.zarr",
+  "lead_steps": 7,
+  "input_variables": [
+    "ssh",
+    "u",
+    "v"
+  ],
+  "target_variables": [
+    "ssh"
+  ],
+  "summary": {
+    "window_count": 5,
+    "overall_mse": 0.014507664181292058,
+    "overall_rmse": 0.1204477653644602,
+    "persistence_mse": 0.00872297715395689,
+    "persistence_rmse": 0.09339687978705119,
+    "skill_vs_persistence": -0.6631551275714549,
+    "variables": {
+      "ssh": {
+        "overall_mse": 0.014507664181292058,
+        "overall_rmse": 0.1204477653644602,
+        "persistence_mse": 0.00872297715395689,
+        "persistence_rmse": 0.09339687978705119,
+        "skill_vs_persistence": -0.6631551275714549,
+        "per_lead": [
+          {
+            "lead_step": 1,
+            "mse": 0.0036965285209589636,
+            "rmse": 0.06079908322465861,
+            "persistence_mse": 0.0012734361022012307,
+            "persistence_rmse": 0.035685236473942984,
+            "skill_vs_persistence": -1.9027985892415287
+          },
+          {
+            "lead_step": 2,
+            "mse": 0.010639684833586216,
+            "rmse": 0.10314884795084342,
+            "persistence_mse": 0.004901739186607301,
+            "persistence_rmse": 0.07001242165935485,
+            "skill_vs_persistence": -1.170593829768896
+          },
+          {
+            "lead_step": 3,
+            "mse": 0.014672582503408194,
+            "rmse": 0.12113043590860306,
+            "persistence_mse": 0.008819579565897583,
+            "persistence_rmse": 0.09391261664918928,
+            "skill_vs_persistence": -0.6636374096722535
+          },
+          {
+            "lead_step": 4,
+            "mse": 0.014991705236025155,
+            "rmse": 0.12244061922428012,
+            "persistence_mse": 0.01197282652137801,
+            "persistence_rmse": 0.10942041181323534,
+            "skill_vs_persistence": -0.25214419579677383
+          },
+          {
+            "lead_step": 5,
+            "mse": 0.013616015668958426,
+            "rmse": 0.1166876843071214,
+            "persistence_mse": 0.012396764080040156,
+            "persistence_rmse": 0.11134075659901076,
+            "skill_vs_persistence": -0.09835240721256988
+          },
+          {
+            "lead_step": 6,
+            "mse": 0.014834247063845396,
+            "rmse": 0.12179592383920489,
+            "persistence_mse": 0.01085891150869429,
+            "persistence_rmse": 0.10420610111070412,
+            "skill_vs_persistence": -0.3660896906626614
+          },
+          {
+            "lead_step": 7,
+            "mse": 0.029102886188775302,
+            "rmse": 0.17059568045169052,
+            "persistence_mse": 0.010837581707164645,
+            "persistence_rmse": 0.10410370650060759,
+            "skill_vs_persistence": -1.6853671764740281
+          }
+        ]
+      }
+    }
+  },
+  "windows": [
+    {
+      "label": "2018-12-05_window",
+      "input_start": "2018-12-05",
+      "absolute_index": 1708,
+      "target_start": "2018-12-19T00:00:00.000000000",
+      "target_end": "2018-12-25T00:00:00.000000000",
+      "overall_mse": 0.013533076271414757,
+      "overall_rmse": 0.11633175091699925,
+      "persistence_mse": 0.0035199474077671766,
+      "persistence_rmse": 0.05932914467415805,
+      "skill_vs_persistence": -2.8446813840321696,
+      "variables": {
+        "ssh": {
+          "overall_mse": 0.013533076271414757,
+          "overall_rmse": 0.11633175091699925,
+          "persistence_mse": 0.0035199474077671766,
+          "persistence_rmse": 0.05932914467415805,
+          "skill_vs_persistence": -2.8446813840321696,
+          "per_lead": [
+            {
+              "lead_step": 1,
+              "mse": 0.0025026535149663687,
+              "rmse": 0.05002652811225629,
+              "persistence_mse": 0.0003874861286021769,
+              "persistence_rmse": 0.019684667348019293,
+              "skill_vs_persistence": -5.458691886583082
+            },
+            {
+              "lead_step": 2,
+              "mse": 0.006068908143788576,
+              "rmse": 0.07790319726294022,
+              "persistence_mse": 0.0011067932937294245,
+              "persistence_rmse": 0.03326850302808085,
+              "skill_vs_persistence": -4.483325728636218
+            },
+            {
+              "lead_step": 3,
+              "mse": 0.0034470390528440475,
+              "rmse": 0.05871148995591959,
+              "persistence_mse": 0.0007628414314240217,
+              "persistence_rmse": 0.027619584200780825,
+              "skill_vs_persistence": -3.5186835833095014
+            },
+            {
+              "lead_step": 4,
+              "mse": 0.0010596528882160783,
+              "rmse": 0.03255231002887626,
+              "persistence_mse": 0.0008958503021858633,
+              "persistence_rmse": 0.029930758463257545,
+              "skill_vs_persistence": -0.18284593489619727
+            },
+            {
+              "lead_step": 5,
+              "mse": 0.004361103288829327,
+              "rmse": 0.06603864996219506,
+              "persistence_mse": 0.0014179133577272296,
+              "persistence_rmse": 0.03765519031590771,
+              "skill_vs_persistence": -2.0757191651115625
+            },
+            {
+              "lead_step": 6,
+              "mse": 0.016277121379971504,
+              "rmse": 0.12758182229444562,
+              "persistence_mse": 0.0027996771968901157,
+              "persistence_rmse": 0.05291197593069187,
+              "skill_vs_persistence": -4.813927904992814
+            },
+            {
+              "lead_step": 7,
+              "mse": 0.0610150508582592,
+              "rmse": 0.2470122483972388,
+              "persistence_mse": 0.0172690711915493,
+              "persistence_rmse": 0.13141183809516288,
+              "skill_vs_persistence": -2.5331981773355126
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "2018-12-19_window",
+      "input_start": "2018-12-19",
+      "absolute_index": 1722,
+      "target_start": "2019-01-02T00:00:00.000000000",
+      "target_end": "2019-01-08T00:00:00.000000000",
+      "overall_mse": 0.008791766129434109,
+      "overall_rmse": 0.09376441824825721,
+      "persistence_mse": 0.0036550669465214014,
+      "persistence_rmse": 0.06045714967248623,
+      "skill_vs_persistence": -1.4053639120896007,
+      "variables": {
+        "ssh": {
+          "overall_mse": 0.008791766129434109,
+          "overall_rmse": 0.09376441824825721,
+          "persistence_mse": 0.0036550669465214014,
+          "persistence_rmse": 0.06045714967248623,
+          "skill_vs_persistence": -1.4053639120896007,
+          "per_lead": [
+            {
+              "lead_step": 1,
+              "mse": 0.002316177124157548,
+              "rmse": 0.048126677884075354,
+              "persistence_mse": 0.0002028544113272801,
+              "persistence_rmse": 0.014242696771583678,
+              "skill_vs_persistence": -10.417928301399801
+            },
+            {
+              "lead_step": 2,
+              "mse": 0.004487073048949242,
+              "rmse": 0.06698561822472972,
+              "persistence_mse": 0.0004253416555002332,
+              "persistence_rmse": 0.0206238128264449,
+              "skill_vs_persistence": -9.549338375222414
+            },
+            {
+              "lead_step": 3,
+              "mse": 0.0022013885900378227,
+              "rmse": 0.04691895768277278,
+              "persistence_mse": 0.002227118704468012,
+              "persistence_rmse": 0.047192358538941576,
+              "skill_vs_persistence": 0.0115530952070807
+            },
+            {
+              "lead_step": 4,
+              "mse": 0.001832595095038414,
+              "rmse": 0.04280882029486931,
+              "persistence_mse": 0.004187639802694321,
+              "persistence_rmse": 0.06471197572856449,
+              "skill_vs_persistence": 0.5623799606978315
+            },
+            {
+              "lead_step": 5,
+              "mse": 0.0051455991342663765,
+              "rmse": 0.07173283163424107,
+              "persistence_mse": 0.00513605959713459,
+              "persistence_rmse": 0.07166630726592929,
+              "skill_vs_persistence": -0.001857364960700325
+            },
+            {
+              "lead_step": 6,
+              "mse": 0.012974769808351994,
+              "rmse": 0.1139068470652752,
+              "persistence_mse": 0.004907788243144751,
+              "persistence_rmse": 0.07005560822050402,
+              "skill_vs_persistence": -1.643710193991211
+            },
+            {
+              "lead_step": 7,
+              "mse": 0.03258476033806801,
+              "rmse": 0.1805124935788878,
+              "persistence_mse": 0.008498664945363998,
+              "persistence_rmse": 0.09218820393826967,
+              "skill_vs_persistence": -2.8341034206605493
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "2019-01-02_window",
+      "input_start": "2019-01-02",
+      "absolute_index": 1736,
+      "target_start": "2019-01-16T00:00:00.000000000",
+      "target_end": "2019-01-22T00:00:00.000000000",
+      "overall_mse": 0.011937526054680347,
+      "overall_rmse": 0.10925898615070684,
+      "persistence_mse": 0.007800069637596607,
+      "persistence_rmse": 0.08831800290765529,
+      "skill_vs_persistence": -0.5304383946959981,
+      "variables": {
+        "ssh": {
+          "overall_mse": 0.011937526054680347,
+          "overall_rmse": 0.10925898615070684,
+          "persistence_mse": 0.007800069637596607,
+          "persistence_rmse": 0.08831800290765529,
+          "skill_vs_persistence": -0.5304383946959981,
+          "per_lead": [
+            {
+              "lead_step": 1,
+              "mse": 0.004340737126767635,
+              "rmse": 0.06588427070832335,
+              "persistence_mse": 0.0012830245541408658,
+              "persistence_rmse": 0.03581933212862665,
+              "skill_vs_persistence": -2.3832065900517887
+            },
+            {
+              "lead_step": 2,
+              "mse": 0.013716980814933777,
+              "rmse": 0.11711951509007275,
+              "persistence_mse": 0.005646988283842802,
+              "persistence_rmse": 0.07514644558355905,
+              "skill_vs_persistence": -1.4290790285825254
+            },
+            {
+              "lead_step": 3,
+              "mse": 0.021276872605085373,
+              "rmse": 0.14586594052446025,
+              "persistence_mse": 0.012948575429618359,
+              "persistence_rmse": 0.11379180739235298,
+              "skill_vs_persistence": -0.6431825045724338
+            },
+            {
+              "lead_step": 4,
+              "mse": 0.014378239400684834,
+              "rmse": 0.11990929655654241,
+              "persistence_mse": 0.01366187073290348,
+              "persistence_rmse": 0.11688400546226793,
+              "skill_vs_persistence": -0.05243562040563288
+            },
+            {
+              "lead_step": 5,
+              "mse": 0.005852959584444761,
+              "rmse": 0.07650463766625368,
+              "persistence_mse": 0.01056809350848198,
+              "persistence_rmse": 0.10280123301051393,
+              "skill_vs_persistence": 0.4461669382706388
+            },
+            {
+              "lead_step": 6,
+              "mse": 0.004607597831636667,
+              "rmse": 0.06787928867951304,
+              "persistence_mse": 0.007677559740841389,
+              "persistence_rmse": 0.08762168533440445,
+              "skill_vs_persistence": 0.399861676474338
+            },
+            {
+              "lead_step": 7,
+              "mse": 0.01938929595053196,
+              "rmse": 0.13924545217181047,
+              "persistence_mse": 0.0028143790550529957,
+              "persistence_rmse": 0.05305072153187924,
+              "skill_vs_persistence": -5.889369047754959
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "2019-01-16_window",
+      "input_start": "2019-01-16",
+      "absolute_index": 1750,
+      "target_start": "2019-01-30T00:00:00.000000000",
+      "target_end": "2019-02-05T00:00:00.000000000",
+      "overall_mse": 0.01483601238578558,
+      "overall_rmse": 0.12180317067213636,
+      "persistence_mse": 0.005402467213571072,
+      "persistence_rmse": 0.07350147762848766,
+      "skill_vs_persistence": -1.7461550064602545,
+      "variables": {
+        "ssh": {
+          "overall_mse": 0.01483601238578558,
+          "overall_rmse": 0.12180317067213636,
+          "persistence_mse": 0.005402467213571072,
+          "persistence_rmse": 0.07350147762848766,
+          "skill_vs_persistence": -1.7461550064602545,
+          "per_lead": [
+            {
+              "lead_step": 1,
+              "mse": 0.00011358259507687762,
+              "rmse": 0.010657513550396153,
+              "persistence_mse": 0.000890194030944258,
+              "persistence_rmse": 0.029836119569144007,
+              "skill_vs_persistence": 0.8724069235148691
+            },
+            {
+              "lead_step": 2,
+              "mse": 0.004312215838581324,
+              "rmse": 0.06566746407911092,
+              "persistence_mse": 0.007974397391080856,
+              "persistence_rmse": 0.08929948147151168,
+              "skill_vs_persistence": 0.45924241957086087
+            },
+            {
+              "lead_step": 3,
+              "mse": 0.007348871324211359,
+              "rmse": 0.08572555817381045,
+              "persistence_mse": 0.007943698205053806,
+              "persistence_rmse": 0.08912742678353171,
+              "skill_vs_persistence": 0.07488034735055982
+            },
+            {
+              "lead_step": 4,
+              "mse": 0.016084805130958557,
+              "rmse": 0.12682588509826595,
+              "persistence_mse": 0.009141740389168262,
+              "persistence_rmse": 0.09561244892360127,
+              "skill_vs_persistence": -0.7594904740476875
+            },
+            {
+              "lead_step": 5,
+              "mse": 0.021548260003328323,
+              "rmse": 0.146793255987216,
+              "persistence_mse": 0.006014579441398382,
+              "persistence_rmse": 0.0775537197134888,
+              "skill_vs_persistence": -2.5826711099718023
+            },
+            {
+              "lead_step": 6,
+              "mse": 0.025924522429704666,
+              "rmse": 0.16101093885107517,
+              "persistence_mse": 0.003529798472300172,
+              "persistence_rmse": 0.059412107118837085,
+              "skill_vs_persistence": -6.344476641696518
+            },
+            {
+              "lead_step": 7,
+              "mse": 0.028519831597805023,
+              "rmse": 0.1688781560705973,
+              "persistence_mse": 0.0023228630889207125,
+              "persistence_rmse": 0.048196089975440046,
+              "skill_vs_persistence": -11.277878852970359
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "2019-01-30_window",
+      "input_start": "2019-01-30",
+      "absolute_index": 1764,
+      "target_start": "2019-02-13T00:00:00.000000000",
+      "target_end": "2019-02-19T00:00:00.000000000",
+      "overall_mse": 0.023439940065145493,
+      "overall_rmse": 0.1531010779359358,
+      "persistence_mse": 0.023237334564328194,
+      "persistence_rmse": 0.15243796956246888,
+      "skill_vs_persistence": -0.008718964744274915,
+      "variables": {
+        "ssh": {
+          "overall_mse": 0.023439940065145493,
+          "overall_rmse": 0.1531010779359358,
+          "persistence_mse": 0.023237334564328194,
+          "persistence_rmse": 0.15243796956246888,
+          "skill_vs_persistence": -0.008718964744274915,
+          "per_lead": [
+            {
+              "lead_step": 1,
+              "mse": 0.00920949224382639,
+              "rmse": 0.09596609945093314,
+              "persistence_mse": 0.0036036213859915733,
+              "persistence_rmse": 0.0600301706310383,
+              "skill_vs_persistence": -1.555621486659677
+            },
+            {
+              "lead_step": 2,
+              "mse": 0.02461324632167816,
+              "rmse": 0.1568860934617156,
+              "persistence_mse": 0.00935517530888319,
+              "persistence_rmse": 0.09672215521214976,
+              "skill_vs_persistence": -1.6309764925844519
+            },
+            {
+              "lead_step": 3,
+              "mse": 0.039088740944862366,
+              "rmse": 0.19770872753842297,
+              "persistence_mse": 0.02021566405892372,
+              "persistence_rmse": 0.14218179932369587,
+              "skill_vs_persistence": -0.9335867884887796
+            },
+            {
+              "lead_step": 4,
+              "mse": 0.04160323366522789,
+              "rmse": 0.20396870756375324,
+              "persistence_mse": 0.031977031379938126,
+              "persistence_rmse": 0.17882122743102433,
+              "skill_vs_persistence": -0.30103489504435643
+            },
+            {
+              "lead_step": 5,
+              "mse": 0.03117215633392334,
+              "rmse": 0.17655638287505593,
+              "persistence_mse": 0.0388471744954586,
+              "persistence_rmse": 0.19709686576771993,
+              "skill_vs_persistence": 0.19756953398071475
+            },
+            {
+              "lead_step": 6,
+              "mse": 0.014387223869562149,
+              "rmse": 0.11994675431024446,
+              "persistence_mse": 0.03537973389029503,
+              "persistence_rmse": 0.18809501293307865,
+              "skill_vs_persistence": 0.5933484430896556
+            },
+            {
+              "lead_step": 7,
+              "mse": 0.004005492199212313,
+              "rmse": 0.06328895795644224,
+              "persistence_mse": 0.023282930254936218,
+              "persistence_rmse": 0.15258745117124217,
+              "skill_vs_persistence": 0.8279644290751115
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

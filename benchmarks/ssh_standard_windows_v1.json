@@ -1,0 +1,27 @@
+{
+  "name": "ssh_standard_windows_v1",
+  "zarr_path": "data/processed/hycom_training_2014-04-02_to_2019-03-03.zarr",
+  "lead_steps": 7,
+  "windows": [
+    {
+      "label": "2018-12-05_window",
+      "input_start": "2018-12-05"
+    },
+    {
+      "label": "2018-12-19_window",
+      "input_start": "2018-12-19"
+    },
+    {
+      "label": "2019-01-02_window",
+      "input_start": "2019-01-02"
+    },
+    {
+      "label": "2019-01-16_window",
+      "input_start": "2019-01-16"
+    },
+    {
+      "label": "2019-01-30_window",
+      "input_start": "2019-01-30"
+    }
+  ]
+}

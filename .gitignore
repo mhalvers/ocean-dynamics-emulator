@@ -43,3 +43,8 @@ data/raw/
 
 # Optional logs
 *.log
+
+# Local experiment tracking outputs
+experiments/runs/
+experiments/registry.jsonl
+experiments/plots/

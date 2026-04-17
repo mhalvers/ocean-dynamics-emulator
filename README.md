@@ -2,7 +2,7 @@
 
 `ode` is a library for forecasting ocean surface currents and sea surface height.
 Currently, it pulls HYCOM subsets, prepares local training stores, and trains
-a LSTM-PCA forecasting model.  
+a normalized PCA-LSTM forecasting model.  
 
 The current repository workflow is:
 
@@ -19,7 +19,7 @@ The current repository workflow is:
 - Local Zarr conversion for repeatable training runs
 - HYCOM-specific raw-to-training preparation with merge, rename, squeeze, sort, and deduplicate steps
 - Sliding-window PyTorch dataset for SSH and surface current fields
-- PCA-plus-LSTM forecasting model over leading field components
+- Channel-normalized PCA-plus-LSTM forecasting model over leading field components
 - Training loop and checkpoint saving
 - Notebook-style Python viewer for one HYCOM timestamp
 - CLI for pulling, preparation, conversion, and training
@@ -115,9 +115,9 @@ The raw HYCOM pull layout is split into daily `ssh` files and daily `u-v` surfac
 ```bash
 ode prepare-hycom \
   --input-dir data/raw/hycom \
-  --start-date 2019-01-01 \
+  --start-date 2014-04-02 \
   --end-date 2019-03-03 \
-  --output data/processed/hycom_training_2019q1.zarr \
+  --output data/processed/hycom_training_2014-04-02_to_2019-03-03.zarr \
   --chunk time=32 \
   --chunk lat=28 \
   --chunk lon=51
@@ -131,7 +131,7 @@ This preparation step:
 - sorts and deduplicates overlapping timestamps between daily pulls
 - optionally filters the prepared dataset to a clean inclusive date range inside a larger raw directory
 
-For the current dataset in this repository, this preparation step has been used to produce a store at `data/processed/hycom_training_2019q1.zarr`.
+For the current dataset in this repository, the training store currently used by the canonical config is `data/processed/hycom_training_2014-04-02_to_2019-03-03.zarr`, which contains the full available daily SSH, u, and v fields from the current HYCOM `expt_32.5` source on the repository's training grid.
 
 ## Inspect One HYCOM Timestamp
 
@@ -175,26 +175,27 @@ You can train directly from CLI flags:
 
 ```bash
 ode train \
-  --zarr-path data/processed/hycom_training_2019q1.zarr \
+  --zarr-path data/processed/hycom_training_2014-04-02_to_2019-03-03.zarr \
   --variable ssh \
   --variable u \
   --variable v \
+  --target-variable ssh \
   --time-dim time \
   --spatial-dim lat \
   --spatial-dim lon \
-  --pca-components 16 \
-  --lstm-hidden-size 64 \
+  --pca-components 32 \
+  --lstm-hidden-size 128 \
   --lstm-layers 2 \
   --lstm-dropout 0.1 \
-  --input-steps 6 \
-  --output-steps 1 \
-  --batch-size 8 \
+  --input-steps 14 \
+  --output-steps 7 \
+  --batch-size 32 \
   --train-fraction 0.8 \
-  --epochs 50 \
+  --epochs 100 \
   --learning-rate 1e-3 \
   --weight-decay 1e-5 \
   --device auto \
-  --checkpoint-path checkpoints/pca_lstm_hycom_full.pt
+  --checkpoint-path checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03.pt
 ```
 
 The repository also includes a reusable JSON config file at `configs/hycom_full_train.json`:
@@ -202,10 +203,10 @@ The repository also includes a reusable JSON config file at `configs/hycom_full_
 ```bash
 ode train \
   --config configs/hycom_full_train.json \
-  --checkpoint-path checkpoints/pca_lstm_hycom_full.pt
+  --checkpoint-path checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03.pt
 ```
 
-The trainer prints the final train and validation losses and saves a checkpoint when `--checkpoint-path` is provided. Checkpoints contain:
+The trainer prints the final train and validation losses and saves a checkpoint when `--checkpoint-path` is provided. The canonical config now trains a direct 7-step model from 14 days of lookback, uses `ssh`, `u`, and `v` as inputs, predicts only `ssh`, and normalizes each variable before PCA fitting and LSTM forecasting. Checkpoints contain:
 
 - model weights
 - epoch-level training history
@@ -213,50 +214,111 @@ The trainer prints the final train and validation losses and saves a checkpoint 
 - the training config payload
 - the Zarr path used for training
 
+The canonical config also trains `ssh` as a residual over the last observed `ssh` input frame. The model still outputs absolute `ssh`, but its learned target is the forecast correction over the persistence baseline.
+
+The training config also supports date-based splits. When `train_end_date`, `val_start_date`, or `val_end_date` are set, training windows are chosen by forecast target dates instead of a leading sample fraction. The canonical config now uses:
+
+- `train_end_date=2018-11-18`
+- `val_start_date=2018-11-19`
+- `val_end_date=2018-12-18`
+
+That keeps the validation target window recent while leaving the December 2018 to January 2019 benchmark targets outside the training and validation split.
+
+An autoregressive decoder variant of the same PCA-LSTM backbone is available through `configs/hycom_autoregressive_decoder_train.json`. It keeps the same PCA encoder idea but replaces the one-shot 7-step coefficient readout with a stepwise decoder LSTM in target PCA space.
+
+## Track Experiments
+
+The repository includes a lightweight local experiment-tracking workflow built around four pieces:
+
+- a fixed benchmark spec at `benchmarks/ssh_standard_windows_v1.json`
+- a benchmark evaluator at `scripts/evaluate_benchmark.py`
+- a tracked training wrapper at `scripts/run_tracked_experiment.py`
+- a local run registry at `experiments/registry.jsonl`
+
+The benchmark spec defines exact input start dates on a standardized evaluation store. That means experiment comparisons do not drift when the training store length changes.
+
+For future runs, prefer the built-in tracked workflow from the main CLI so training, benchmark evaluation, and registry logging happen in one command:
+
+```bash
+ode experiment \
+  --config configs/hycom_full_train.json \
+  --benchmark benchmarks/ssh_standard_windows_v1.json
+```
+
+That command trains the model, writes a dedicated run directory under `experiments/runs/`, evaluates the saved checkpoint on the fixed benchmark, and appends one row to `experiments/registry.jsonl`.
+
+To evaluate an existing checkpoint on the fixed benchmark windows:
+
+```bash
+/Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/evaluate_benchmark.py \
+  --checkpoint checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03.pt \
+  --benchmark benchmarks/ssh_standard_windows_v1.json \
+  --output experiments/manual_eval_ssh_target.json
+```
+
+To train a new run, save its checkpoint and training summary into a dedicated run directory, evaluate it on the benchmark, and append one record to the registry in one step:
+
+```bash
+/Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/run_tracked_experiment.py \
+  --config configs/hycom_full_train.json \
+  --benchmark benchmarks/ssh_standard_windows_v1.json
+```
+
+The standalone script remains available when you want the same tracked workflow outside the `ode` console entry point.
+
+That command creates a run directory under `experiments/runs/<run_id>/` with:
+
+- `checkpoint.pt`
+- `config.json`
+- `benchmark.json`
+- `training_summary.json`
+- `benchmark_metrics.json`
+- `run_manifest.json`
+
+The registry file records the run id, git commit, training store, model hyperparameters, final train and validation loss, and benchmark metrics such as overall benchmark MSE and SSH benchmark MSE. The generated run directories and registry are local outputs and are ignored by git.
+
 ## Inspect One Saved Forecast
 
 Use the checkpoint prediction script to load a saved model, run one forecast window, print the forecast timestamps, and optionally save a quick comparison figure:
 
 ```bash
 /Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/predict_checkpoint.py \
-  --checkpoint checkpoints/pca_lstm_hycom_full_rerun.pt \
+  --checkpoint checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03.pt \
   --split val \
   --sample-index 0 \
-  --forecast-step 0 \
-  --figure-path checkpoints/pca_lstm_hycom_full_rerun_prediction.png
+  --forecast-step 6 \
+  --figure-path checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03_day7_prediction.png
 ```
 
-The figure keeps scalar variables such as `ssh` as heatmaps and combines `u` plus `v` into a single surface-current quiver row for target, prediction, and error.
+When the checkpoint predicts only `ssh`, the figure contains only the SSH target, prediction, and error panels. If a checkpoint predicts `u` and `v` as targets as well, the figure adds the surface-current quiver row.
 
 To inspect one random grid point as a time series, save a second plot that shows the lookback window plus actual versus forecast values at that point:
 
 ```bash
 /Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/predict_checkpoint.py \
-  --checkpoint checkpoints/pca_lstm_hycom_full_rerun.pt \
+  --checkpoint checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03.pt \
   --split val \
   --sample-index 0 \
-  --lead-steps 7 \
-  --timeseries-path checkpoints/pca_lstm_hycom_full_rerun_point_timeseries.png \
+  --timeseries-path checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03_point_timeseries.png \
   --random-seed 7
 ```
 
 That plot picks one spatial point, shows the lookback history used as model input, and overlays the forecast against the actual future values for each variable.
 
-To produce a 7-day lead forecast from the current 1-day model, roll the checkpoint forward autoregressively and plot the seventh day:
+To inspect the seventh day from the direct 7-step model, plot `forecast-step 6` from the saved checkpoint:
 
 ```bash
 /Users/mark/projects/ocean_dynamics_emulator/.venv/bin/python scripts/predict_checkpoint.py \
-  --checkpoint checkpoints/pca_lstm_hycom_full_rerun.pt \
+  --checkpoint checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03.pt \
   --split val \
   --sample-index 0 \
-  --lead-steps 7 \
   --forecast-step 6 \
-  --figure-path checkpoints/pca_lstm_hycom_full_rerun_day7_prediction.png
+  --figure-path checkpoints/pca_lstm_ssh_target_direct7_normalized_pca32_hidden128_100epochs_2014-04-02_to_2019-03-03_day7_prediction.png
 ```
 
-That command uses each predicted day as part of the next input window until it reaches a 7-day lead time.
+If you request more than 7 steps, the script can only roll the checkpoint forward autoregressively when the checkpoint predicts the same variables it consumes as inputs. The canonical SSH-only-target config does not support that longer autoregressive rollout.
 
-The current trainer records one average train loss and one average validation loss per epoch. On the current `hycom_training_2019q1.zarr` store, the full config run completed 50 epochs on `mps` and reached a final train loss near `0.0044` and final validation loss near `0.0160`.
+The current trainer records one average train loss and one average validation loss per epoch. Final metrics depend on the selected store span, lookback window, and checkpoint settings.
 
 ## Assumptions
 
