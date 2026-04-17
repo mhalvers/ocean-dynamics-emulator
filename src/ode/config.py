@@ -67,6 +67,10 @@ class ModelConfig:
     lstm_layers: int = 2
     lstm_dropout: float = 0.0
     autoregressive_decoder: bool = False
+    teacher_forcing_start_ratio: float = 1.0
+    teacher_forcing_end_ratio: float = 1.0
+    residual_encoder: bool = False
+    use_conv_lstm: bool = False
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ModelConfig":
@@ -76,6 +80,10 @@ class ModelConfig:
             lstm_layers=int(payload.get("lstm_layers", 2)),
             lstm_dropout=float(payload.get("lstm_dropout", 0.0)),
             autoregressive_decoder=bool(payload.get("autoregressive_decoder", False)),
+            teacher_forcing_start_ratio=float(payload.get("teacher_forcing_start_ratio", 1.0)),
+            teacher_forcing_end_ratio=float(payload.get("teacher_forcing_end_ratio", 1.0)),
+            residual_encoder=bool(payload.get("residual_encoder", False)),
+            use_conv_lstm=bool(payload.get("use_conv_lstm", False)),
         )
 
 

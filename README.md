@@ -320,6 +320,51 @@ If you request more than 7 steps, the script can only roll the checkpoint forwar
 
 The current trainer records one average train loss and one average validation loss per epoch. Final metrics depend on the selected store span, lookback window, and checkpoint settings.
 
+## Experimental Findings: LSTM Architectures
+
+Over a series of systematic experiments, we evaluated various LSTM improvements to reduce forecast error. Here are the key findings:
+
+### Baseline Performance
+
+A **minimal 1-layer PCA-LSTM with direct 7-step output** (no autoregressive, no scheduled sampling) achieved:
+- **SSH RMSE: 0.0830**
+- Skill vs persistence: +0.21
+
+This serves as the vanilla baseline for all improvements.
+
+### Scheduled Sampling for Autoregressive Decoder
+
+Implementing an autoregressive decoder with scheduled sampling significantly improved results:
+- **SSH RMSE: 0.0749** (-9.8% vs baseline, **+16.1% vs naive autoregressive**)
+- Skill vs persistence: +0.36 (notably better than persistence)
+- Teacher forcing ratio schedule: 1.0 → 0.2 over 100 epochs
+- Key insight: Gradually transitioning from ground-truth targets to model predictions during training reduces exposure bias and improves generalization
+
+### Capacity Experiments
+
+Increasing model capacity (PCA 64 components, hidden size 192) with the same scheduled sampling:
+- **SSH RMSE: 0.0823** (worse than baseline scheduled sampling)
+- Skill vs persistence: +0.22
+- Key insight: The bottleneck was not model capacity but rather the training procedure itself; over-parameterization hurt performance when the training procedure wasn't optimized
+
+### Residual Three-Layer Encoder
+
+Implementing a three-layer encoder with skip connections (inspired by literature on residual LSTM architectures):
+- **SSH RMSE: 0.1845** (-146% regression vs baseline)
+- Skill vs persistence: -0.36 (significantly worse)
+- Key insight: The residual topology that works for deeper networks was not effective in this PCA-compressed latent space; the added complexity introduced optimization difficulties
+
+### Summary
+
+For this ocean forecasting task, **scheduled sampling for autoregressive decoders is the most effective improvement**, reducing SSH RMSE from 0.0892 (naive autoregressive) to 0.0749 (with scheduling). The key finding is that **training procedure has greater impact than model capacity or architectural complexity**.
+
+The results suggest that:
+1. Exposure bias in autoregressive models is critical—scheduled sampling directly addresses it
+2. Capacity increases and complex residual architectures provide no benefit and can hurt when the training procedure isn't adjusted accordingly
+3. Spatial field correlations in PCA-compressed space are limited—full spatial field models (ConvLSTM) should be explored next
+
+Detailed comparison table available in [experiments/LSTM_COMPARISON.md](experiments/LSTM_COMPARISON.md)
+
 ## Assumptions
 
 - The training model projects full fields onto the top N principal components, trains an LSTM on coefficient sequences, and reconstructs predicted fields back to the original grid.

@@ -54,6 +54,7 @@ class PCALSTMForecaster(nn.Module):
         lstm_layers: int = 2,
         lstm_dropout: float = 0.0,
         autoregressive_decoder: bool = False,
+        residual_encoder: bool = False,
     ) -> None:
         super().__init__()
         if lstm_hidden_size < 1:
@@ -99,6 +100,7 @@ class PCALSTMForecaster(nn.Module):
         self.lstm_hidden_size = lstm_hidden_size
         self.lstm_layers = lstm_layers
         self.autoregressive_decoder = autoregressive_decoder
+        self.residual_encoder = residual_encoder
 
         self.register_buffer("input_pca_mean", input_pca_mean.to(dtype=torch.float32))
         self.register_buffer("input_pca_components", input_pca_components.to(dtype=torch.float32))
@@ -110,13 +112,38 @@ class PCALSTMForecaster(nn.Module):
         self.register_buffer("target_channel_std", target_channel_std.to(dtype=torch.float32))
         self.register_buffer("target_residual_input_indices", target_residual_input_indices.to(dtype=torch.int64))
 
-        self.lstm = nn.LSTM(
-            input_size=input_num_components,
-            hidden_size=lstm_hidden_size,
-            num_layers=lstm_layers,
-            dropout=dropout,
-            batch_first=True,
-        )
+        if residual_encoder:
+            dropout = lstm_dropout
+            self.lstm_layer_1 = nn.LSTM(
+                input_size=input_num_components,
+                hidden_size=lstm_hidden_size,
+                num_layers=1,
+                dropout=0.0,
+                batch_first=True,
+            )
+            self.lstm_layer_2 = nn.LSTM(
+                input_size=lstm_hidden_size,
+                hidden_size=lstm_hidden_size,
+                num_layers=1,
+                dropout=0.0,
+                batch_first=True,
+            )
+            self.residual_projection = nn.Linear(input_num_components, lstm_hidden_size)
+            self.lstm_layer_3 = nn.LSTM(
+                input_size=lstm_hidden_size,
+                hidden_size=lstm_hidden_size,
+                num_layers=1,
+                dropout=0.0,
+                batch_first=True,
+            )
+        else:
+            self.lstm = nn.LSTM(
+                input_size=input_num_components,
+                hidden_size=lstm_hidden_size,
+                num_layers=lstm_layers,
+                dropout=dropout,
+                batch_first=True,
+            )
         if autoregressive_decoder:
             self.decoder = nn.LSTM(
                 input_size=target_num_components,
@@ -189,11 +216,20 @@ class PCALSTMForecaster(nn.Module):
             outputs[:, :, target_index] = outputs[:, :, target_index] - baseline
         return outputs
 
+    def _encode_residual(self, coefficients: torch.Tensor) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        lstm_outputs_1, hidden_1 = self.lstm_layer_1(coefficients)
+        lstm_outputs_2, hidden_2 = self.lstm_layer_2(lstm_outputs_1)
+        projected_coefficients = self.residual_projection(coefficients)
+        residual_input = lstm_outputs_2 + projected_coefficients
+        lstm_outputs_3, hidden_3 = self.lstm_layer_3(residual_input)
+        return lstm_outputs_3, hidden_3
+
     def _decode_autoregressive(
         self,
         inputs: torch.Tensor,
         encoder_hidden: tuple[torch.Tensor, torch.Tensor],
         teacher_forcing_targets: torch.Tensor | None = None,
+        teacher_forcing_ratio: float = 1.0,
     ) -> torch.Tensor:
         batch_size = inputs.shape[0]
         decoder_input = self.decoder_start_token.view(1, 1, -1).expand(batch_size, 1, -1)
@@ -210,13 +246,27 @@ class PCALSTMForecaster(nn.Module):
             next_coefficients = self.readout(decoder_outputs[:, -1]).unsqueeze(1)
             predicted_coefficients.append(next_coefficients)
             if teacher_forcing_coefficients is not None and step_index + 1 < self.output_steps:
-                decoder_input = teacher_forcing_coefficients[:, step_index : step_index + 1]
+                if teacher_forcing_ratio >= 1.0:
+                    decoder_input = teacher_forcing_coefficients[:, step_index : step_index + 1]
+                elif teacher_forcing_ratio <= 0.0:
+                    decoder_input = next_coefficients
+                else:
+                    teacher_coefficients = teacher_forcing_coefficients[:, step_index : step_index + 1]
+                    use_teacher = (
+                        torch.rand((batch_size, 1, 1), device=next_coefficients.device) < teacher_forcing_ratio
+                    )
+                    decoder_input = torch.where(use_teacher, teacher_coefficients, next_coefficients)
             else:
                 decoder_input = next_coefficients
 
         return torch.cat(predicted_coefficients, dim=1)
 
-    def forward(self, inputs: torch.Tensor, teacher_forcing_targets: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        teacher_forcing_targets: torch.Tensor | None = None,
+        teacher_forcing_ratio: float = 1.0,
+    ) -> torch.Tensor:
         if inputs.ndim != 5:
             raise ValueError("PCALSTMForecaster expects [batch, input_steps, channels, height, width] inputs.")
 
@@ -229,9 +279,20 @@ class PCALSTMForecaster(nn.Module):
             raise ValueError(f"Expected spatial shape {self.spatial_shape}, received {(height, width)}.")
 
         coefficients = self._project_inputs(inputs)
-        lstm_outputs, hidden = self.lstm(coefficients)
+        if self.residual_encoder:
+            lstm_outputs, hidden = self._encode_residual(coefficients)
+            if self.autoregressive_decoder:
+                h, c = hidden
+                hidden = (h.repeat(2, 1, 1), c.repeat(2, 1, 1))
+        else:
+            lstm_outputs, hidden = self.lstm(coefficients)
         if self.autoregressive_decoder:
-            predicted_coefficients = self._decode_autoregressive(inputs, hidden, teacher_forcing_targets)
+            predicted_coefficients = self._decode_autoregressive(
+                inputs,
+                hidden,
+                teacher_forcing_targets,
+                teacher_forcing_ratio=teacher_forcing_ratio,
+            )
         else:
             predicted_coefficients = self.readout(lstm_outputs[:, -1]).reshape(batch, self.output_steps, self.target_num_components)
         reconstructed_targets = self._reconstruct_targets(predicted_coefficients)

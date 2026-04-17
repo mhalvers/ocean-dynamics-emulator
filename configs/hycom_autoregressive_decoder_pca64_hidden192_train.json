@@ -17,8 +17,8 @@
     "val_end_date": "2018-12-18"
   },
   "model": {
-    "pca_components": 32,
-    "lstm_hidden_size": 128,
+    "pca_components": 64,
+    "lstm_hidden_size": 192,
     "lstm_layers": 2,
     "lstm_dropout": 0.1,
     "autoregressive_decoder": true,

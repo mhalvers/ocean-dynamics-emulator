@@ -13,6 +13,7 @@ from ode.config import TrainingConfig
 from ode.data.dataset import ForecastWindowDataset
 from ode.data.netcdf import open_training_dataset
 from ode.models.pca_lstm import PCALSTMForecaster, compute_channel_statistics, compute_principal_components
+from ode.models.conv_lstm import ConvLSTMForecaster
 from ode.training.losses import mse_loss
 
 
@@ -259,37 +260,76 @@ def _fit_pca_statistics(
     return input_stats, target_stats
 
 
+def _teacher_forcing_ratio_for_epoch(config: TrainingConfig, epoch_index: int) -> float:
+    start_ratio = float(config.model.teacher_forcing_start_ratio)
+    end_ratio = float(config.model.teacher_forcing_end_ratio)
+    if not (0.0 <= start_ratio <= 1.0 and 0.0 <= end_ratio <= 1.0):
+        raise ValueError("teacher_forcing_start_ratio and teacher_forcing_end_ratio must be between 0 and 1.")
+    if config.optimization.epochs <= 1:
+        return end_ratio
+
+    progress = epoch_index / float(config.optimization.epochs - 1)
+    return start_ratio + (end_ratio - start_ratio) * progress
+
+
 def fit(config: TrainingConfig) -> TrainingResult:
     dataset, zarr_path = _build_window_dataset(config)
     train_loader, val_loader = _build_dataloaders(dataset, config)
 
     if len(dataset.spatial_dims) != 2:
-        raise ValueError("The PCA-LSTM forecaster currently supports exactly two spatial dimensions.")
+        raise ValueError("The forecaster currently supports exactly two spatial dimensions.")
 
-    input_stats, target_stats = _fit_pca_statistics(dataset, config)
-    input_pca_mean, input_pca_components, _, input_channel_mean, input_channel_std = input_stats
-    target_pca_mean, target_pca_components, _, target_channel_mean, target_channel_std = target_stats
+    if config.model.use_conv_lstm:
+        input_fields = torch.as_tensor(dataset.input_array.values, dtype=torch.float32)
+        target_fields = build_residual_target_training_fields(dataset, config)
+        train_timesteps = resolve_train_timestep_count(dataset, config)
+        
+        input_channel_mean, input_channel_std = compute_channel_statistics(input_fields[:train_timesteps])
+        target_channel_mean, target_channel_std = compute_channel_statistics(target_fields[:train_timesteps])
 
-    model = PCALSTMForecaster(
-        input_steps=config.data.input_steps,
-        in_channels=len(dataset.input_variables),
-        out_channels=len(dataset.target_variables),
-        spatial_shape=tuple(int(dataset.input_array.sizes[dim]) for dim in dataset.spatial_dims),
-        output_steps=config.data.output_steps,
-        input_pca_mean=input_pca_mean,
-        input_pca_components=input_pca_components,
-        input_channel_mean=input_channel_mean,
-        input_channel_std=input_channel_std,
-        target_pca_mean=target_pca_mean,
-        target_pca_components=target_pca_components,
-        target_channel_mean=target_channel_mean,
-        target_channel_std=target_channel_std,
-        target_residual_input_indices=resolve_residual_target_input_indices(dataset, config),
-        lstm_hidden_size=config.model.lstm_hidden_size,
-        lstm_layers=config.model.lstm_layers,
-        lstm_dropout=config.model.lstm_dropout,
-        autoregressive_decoder=config.model.autoregressive_decoder,
-    )
+        model = ConvLSTMForecaster(
+            input_steps=config.data.input_steps,
+            in_channels=len(dataset.input_variables),
+            out_channels=len(dataset.target_variables),
+            spatial_shape=tuple(int(dataset.input_array.sizes[dim]) for dim in dataset.spatial_dims),
+            output_steps=config.data.output_steps,
+            input_channel_mean=input_channel_mean,
+            input_channel_std=input_channel_std,
+            target_channel_mean=target_channel_mean,
+            target_channel_std=target_channel_std,
+            target_residual_input_indices=resolve_residual_target_input_indices(dataset, config),
+            lstm_hidden_size=config.model.lstm_hidden_size,
+            lstm_layers=config.model.lstm_layers,
+            lstm_dropout=config.model.lstm_dropout,
+            autoregressive_decoder=config.model.autoregressive_decoder,
+        )
+    else:
+        input_stats, target_stats = _fit_pca_statistics(dataset, config)
+        input_pca_mean, input_pca_components, _, input_channel_mean, input_channel_std = input_stats
+        target_pca_mean, target_pca_components, _, target_channel_mean, target_channel_std = target_stats
+
+        model = PCALSTMForecaster(
+            input_steps=config.data.input_steps,
+            in_channels=len(dataset.input_variables),
+            out_channels=len(dataset.target_variables),
+            spatial_shape=tuple(int(dataset.input_array.sizes[dim]) for dim in dataset.spatial_dims),
+            output_steps=config.data.output_steps,
+            input_pca_mean=input_pca_mean,
+            input_pca_components=input_pca_components,
+            input_channel_mean=input_channel_mean,
+            input_channel_std=input_channel_std,
+            target_pca_mean=target_pca_mean,
+            target_pca_components=target_pca_components,
+            target_channel_mean=target_channel_mean,
+            target_channel_std=target_channel_std,
+            target_residual_input_indices=resolve_residual_target_input_indices(dataset, config),
+            lstm_hidden_size=config.model.lstm_hidden_size,
+            lstm_layers=config.model.lstm_layers,
+            lstm_dropout=config.model.lstm_dropout,
+            autoregressive_decoder=config.model.autoregressive_decoder,
+            residual_encoder=config.model.residual_encoder,
+        )
+    
     device = _resolve_device(config.optimization.device)
     model.to(device)
     optimizer = AdamW(
@@ -299,7 +339,8 @@ def fit(config: TrainingConfig) -> TrainingResult:
     )
 
     history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
-    for _ in range(config.optimization.epochs):
+    for epoch_index in range(config.optimization.epochs):
+        teacher_forcing_ratio = _teacher_forcing_ratio_for_epoch(config, epoch_index)
         model.train()
         train_loss_total = 0.0
         train_batches = 0
@@ -308,7 +349,11 @@ def fit(config: TrainingConfig) -> TrainingResult:
             targets = targets.to(device)
             optimizer.zero_grad(set_to_none=True)
             if config.model.autoregressive_decoder:
-                predictions = model(inputs, teacher_forcing_targets=targets)
+                predictions = model(
+                    inputs,
+                    teacher_forcing_targets=targets,
+                    teacher_forcing_ratio=teacher_forcing_ratio,
+                )
             else:
                 predictions = model(inputs)
             loss = mse_loss(predictions, targets)

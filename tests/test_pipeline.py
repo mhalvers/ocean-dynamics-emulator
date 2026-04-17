@@ -202,6 +202,7 @@ def test_model_forward_and_training(tmp_path) -> None:
         lstm_hidden_size=8,
         lstm_layers=1,
         lstm_dropout=0.0,
+        residual_encoder=False,
     )
     sample = np.random.randn(2, 3, 3, 4, 5).astype(np.float32)
     output = model.forward(__import__("torch").from_numpy(sample))
@@ -233,6 +234,7 @@ def test_model_can_predict_residual_over_last_input() -> None:
         lstm_hidden_size=4,
         lstm_layers=1,
         lstm_dropout=0.0,
+        residual_encoder=False,
     )
     for parameter in model.parameters():
         torch.nn.init.zeros_(parameter)
@@ -269,6 +271,7 @@ def test_model_supports_autoregressive_decoder_with_teacher_forcing() -> None:
         lstm_layers=1,
         lstm_dropout=0.0,
         autoregressive_decoder=True,
+        residual_encoder=False,
     )
 
     inputs = torch.arange(3 * 1 * 4 * 5, dtype=torch.float32).reshape(1, 3, 1, 4, 5)

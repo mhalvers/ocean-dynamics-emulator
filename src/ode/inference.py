@@ -10,7 +10,8 @@ import torch
 
 from ode.config import TrainingConfig
 from ode.models.pca_lstm import PCALSTMForecaster
-from ode.training.engine import _build_window_dataset, _fit_pca_statistics, _resolve_device, resolve_residual_target_input_indices, resolve_split_sample_indices
+from ode.models.conv_lstm import ConvLSTMForecaster
+from ode.training.engine import _build_window_dataset, _fit_pca_statistics, _resolve_device, resolve_residual_target_input_indices, resolve_split_sample_indices, build_residual_target_training_fields, resolve_train_timestep_count, compute_channel_statistics
 
 
 @dataclass(slots=True)
@@ -162,30 +163,57 @@ def _resolve_prediction_index(split_indices: list[int], split: str, sample_index
     return resolved_index, resolved_split_indices[resolved_index]
 
 
-def _build_model_from_checkpoint(config: TrainingConfig, dataset, checkpoint: dict, device: str) -> PCALSTMForecaster:
-    input_stats, target_stats = _fit_pca_statistics(dataset, config)
-    input_pca_mean, input_pca_components, _, input_channel_mean, input_channel_std = input_stats
-    target_pca_mean, target_pca_components, _, target_channel_mean, target_channel_std = target_stats
-    model = PCALSTMForecaster(
-        input_steps=config.data.input_steps,
-        in_channels=len(dataset.input_variables),
-        out_channels=len(dataset.target_variables),
-        spatial_shape=tuple(int(dataset.input_array.sizes[dim]) for dim in dataset.spatial_dims),
-        output_steps=config.data.output_steps,
-        input_pca_mean=input_pca_mean,
-        input_pca_components=input_pca_components,
-        input_channel_mean=input_channel_mean,
-        input_channel_std=input_channel_std,
-        target_pca_mean=target_pca_mean,
-        target_pca_components=target_pca_components,
-        target_channel_mean=target_channel_mean,
-        target_channel_std=target_channel_std,
-        target_residual_input_indices=resolve_residual_target_input_indices(dataset, config),
-        lstm_hidden_size=config.model.lstm_hidden_size,
-        lstm_layers=config.model.lstm_layers,
-        lstm_dropout=config.model.lstm_dropout,
-        autoregressive_decoder=config.model.autoregressive_decoder,
-    )
+def _build_model_from_checkpoint(config: TrainingConfig, dataset, checkpoint: dict, device: str) -> PCALSTMForecaster | ConvLSTMForecaster:
+    if config.model.use_conv_lstm:
+        import torch
+        input_fields = torch.as_tensor(dataset.input_array.values, dtype=torch.float32)
+        target_fields = build_residual_target_training_fields(dataset, config)
+        train_timesteps = resolve_train_timestep_count(dataset, config)
+        
+        input_channel_mean, input_channel_std = compute_channel_statistics(input_fields[:train_timesteps])
+        target_channel_mean, target_channel_std = compute_channel_statistics(target_fields[:train_timesteps])
+
+        model = ConvLSTMForecaster(
+            input_steps=config.data.input_steps,
+            in_channels=len(dataset.input_variables),
+            out_channels=len(dataset.target_variables),
+            spatial_shape=tuple(int(dataset.input_array.sizes[dim]) for dim in dataset.spatial_dims),
+            output_steps=config.data.output_steps,
+            input_channel_mean=input_channel_mean,
+            input_channel_std=input_channel_std,
+            target_channel_mean=target_channel_mean,
+            target_channel_std=target_channel_std,
+            target_residual_input_indices=resolve_residual_target_input_indices(dataset, config),
+            lstm_hidden_size=config.model.lstm_hidden_size,
+            lstm_layers=config.model.lstm_layers,
+            lstm_dropout=config.model.lstm_dropout,
+            autoregressive_decoder=config.model.autoregressive_decoder,
+        )
+    else:
+        input_stats, target_stats = _fit_pca_statistics(dataset, config)
+        input_pca_mean, input_pca_components, _, input_channel_mean, input_channel_std = input_stats
+        target_pca_mean, target_pca_components, _, target_channel_mean, target_channel_std = target_stats
+        model = PCALSTMForecaster(
+            input_steps=config.data.input_steps,
+            in_channels=len(dataset.input_variables),
+            out_channels=len(dataset.target_variables),
+            spatial_shape=tuple(int(dataset.input_array.sizes[dim]) for dim in dataset.spatial_dims),
+            output_steps=config.data.output_steps,
+            input_pca_mean=input_pca_mean,
+            input_pca_components=input_pca_components,
+            input_channel_mean=input_channel_mean,
+            input_channel_std=input_channel_std,
+            target_pca_mean=target_pca_mean,
+            target_pca_components=target_pca_components,
+            target_channel_mean=target_channel_mean,
+            target_channel_std=target_channel_std,
+            target_residual_input_indices=resolve_residual_target_input_indices(dataset, config),
+            lstm_hidden_size=config.model.lstm_hidden_size,
+            lstm_layers=config.model.lstm_layers,
+            lstm_dropout=config.model.lstm_dropout,
+            autoregressive_decoder=config.model.autoregressive_decoder,
+            residual_encoder=config.model.residual_encoder,
+        )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()

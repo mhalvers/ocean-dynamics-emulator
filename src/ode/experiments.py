@@ -365,6 +365,8 @@ def _build_registry_entry(
         "lstm_layers": config.model.lstm_layers,
         "lstm_dropout": config.model.lstm_dropout,
         "autoregressive_decoder": config.model.autoregressive_decoder,
+        "teacher_forcing_start_ratio": config.model.teacher_forcing_start_ratio,
+        "teacher_forcing_end_ratio": config.model.teacher_forcing_end_ratio,
         "epochs": config.optimization.epochs,
         "learning_rate": config.optimization.learning_rate,
         "weight_decay": config.optimization.weight_decay,
