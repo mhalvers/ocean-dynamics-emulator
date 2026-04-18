@@ -188,6 +188,7 @@ def _build_model_from_checkpoint(config: TrainingConfig, dataset, checkpoint: di
             lstm_layers=config.model.lstm_layers,
             lstm_dropout=config.model.lstm_dropout,
             autoregressive_decoder=config.model.autoregressive_decoder,
+            residual_encoder=config.model.residual_encoder,
         )
     else:
         input_stats, target_stats = _fit_pca_statistics(dataset, config)

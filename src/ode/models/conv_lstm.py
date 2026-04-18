@@ -59,6 +59,7 @@ class ConvLSTMForecaster(nn.Module):
         lstm_layers: int = 2,
         lstm_dropout: float = 0.0,
         autoregressive_decoder: bool = False,
+        residual_encoder: bool = False,
         kernel_size: int = 3,
     ) -> None:
         super().__init__()
@@ -92,6 +93,7 @@ class ConvLSTMForecaster(nn.Module):
         self.lstm_hidden_size = lstm_hidden_size
         self.lstm_layers = lstm_layers
         self.autoregressive_decoder = autoregressive_decoder
+        self.residual_encoder = residual_encoder
 
         self.register_buffer("input_channel_mean", input_channel_mean.to(dtype=torch.float32))
         self.register_buffer("input_channel_std", input_channel_std.to(dtype=torch.float32))
@@ -109,6 +111,15 @@ class ConvLSTMForecaster(nn.Module):
         ) if autoregressive_decoder else None
 
         self.output_conv = nn.Conv2d(lstm_hidden_size, out_channels, kernel_size=1)
+        # Learned residual skip from the most recent input frame.
+        # Zero init keeps behavior unchanged until training learns a useful correction.
+        if self.residual_encoder:
+            self.residual_projection = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+            nn.init.zeros_(self.residual_projection.weight)
+            if self.residual_projection.bias is not None:
+                nn.init.zeros_(self.residual_projection.bias)
+        else:
+            self.residual_projection = None
 
     def _normalize_inputs(self, inputs: torch.Tensor) -> torch.Tensor:
         batch, steps, channels, height, width = inputs.shape
@@ -261,4 +272,11 @@ class ConvLSTMForecaster(nn.Module):
             predicted_normalized = self.output_conv(last_hidden).unsqueeze(1).expand(-1, self.output_steps, -1, -1, -1)
 
         denormalized = self._denormalize_targets(predicted_normalized)
-        return self._add_residual_baseline(inputs, denormalized)
+        outputs = self._add_residual_baseline(inputs, denormalized)
+
+        if self.residual_projection is not None:
+            last_input = inputs[:, -1, :, :, :]
+            skip = self.residual_projection(last_input).unsqueeze(1).expand(-1, self.output_steps, -1, -1, -1)
+            outputs = outputs + skip
+
+        return outputs

@@ -23,6 +23,8 @@ class TrainingResult:
     history: dict[str, list[float]]
     device: str
     zarr_path: str | None
+    trained_epochs: int
+    best_epoch: int | None
 
 
 def _resolve_device(requested: str) -> str:
@@ -272,7 +274,29 @@ def _teacher_forcing_ratio_for_epoch(config: TrainingConfig, epoch_index: int) -
     return start_ratio + (end_ratio - start_ratio) * progress
 
 
-def fit(config: TrainingConfig) -> TrainingResult:
+def _save_epoch_checkpoint(
+    *,
+    model: nn.Module,
+    history: dict[str, list[float]],
+    device: str,
+    zarr_path: str | None,
+    config: TrainingConfig,
+    checkpoint_path: Path,
+) -> None:
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "history": history,
+            "device": device,
+            "zarr_path": zarr_path,
+            "config": asdict(config),
+        },
+        checkpoint_path,
+    )
+
+
+def fit(config: TrainingConfig, *, checkpoint_dir: str | Path | None = None) -> TrainingResult:
     dataset, zarr_path = _build_window_dataset(config)
     train_loader, val_loader = _build_dataloaders(dataset, config)
 
@@ -302,6 +326,7 @@ def fit(config: TrainingConfig) -> TrainingResult:
             lstm_layers=config.model.lstm_layers,
             lstm_dropout=config.model.lstm_dropout,
             autoregressive_decoder=config.model.autoregressive_decoder,
+            residual_encoder=config.model.residual_encoder,
         )
     else:
         input_stats, target_stats = _fit_pca_statistics(dataset, config)
@@ -340,6 +365,21 @@ def fit(config: TrainingConfig) -> TrainingResult:
 
     history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
     total_epochs = int(config.optimization.epochs)
+    checkpoint_every_epochs = int(config.optimization.checkpoint_every_epochs)
+    early_stopping_patience = int(config.optimization.early_stopping_patience)
+    early_stopping_min_delta = float(config.optimization.early_stopping_min_delta)
+    save_best_checkpoint = bool(config.optimization.save_best_checkpoint)
+
+    checkpoints_path: Path | None = None
+    if checkpoint_dir is not None:
+        checkpoints_path = Path(checkpoint_dir)
+        checkpoints_path.mkdir(parents=True, exist_ok=True)
+
+    best_metric: float | None = None
+    best_epoch: int | None = None
+    best_state_dict: dict[str, torch.Tensor] | None = None
+    epochs_without_improvement = 0
+
     print(f"Starting training for {total_epochs} epochs on device={device} (conv_lstm={config.model.use_conv_lstm})", flush=True)
     for epoch_index in range(config.optimization.epochs):
         teacher_forcing_ratio = _teacher_forcing_ratio_for_epoch(config, epoch_index)
@@ -393,7 +433,57 @@ def fit(config: TrainingConfig) -> TrainingResult:
                 flush=True,
             )
 
-    return TrainingResult(model=model, history=history, device=device, zarr_path=zarr_path)
+        if checkpoint_every_epochs > 0 and checkpoints_path is not None and (epoch_index + 1) % checkpoint_every_epochs == 0:
+            periodic_path = checkpoints_path / f"epoch_{epoch_index + 1:03d}.pt"
+            _save_epoch_checkpoint(
+                model=model,
+                history=history,
+                device=device,
+                zarr_path=zarr_path,
+                config=config,
+                checkpoint_path=periodic_path,
+            )
+
+        monitor_metric = val_loss if val_loss is not None else train_loss
+        improved = best_metric is None or (best_metric - monitor_metric) > early_stopping_min_delta
+        if improved:
+            best_metric = monitor_metric
+            best_epoch = epoch_index + 1
+            best_state_dict = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+            epochs_without_improvement = 0
+            if save_best_checkpoint and checkpoints_path is not None:
+                best_path = checkpoints_path / "best.pt"
+                _save_epoch_checkpoint(
+                    model=model,
+                    history=history,
+                    device=device,
+                    zarr_path=zarr_path,
+                    config=config,
+                    checkpoint_path=best_path,
+                )
+        else:
+            epochs_without_improvement += 1
+
+        if early_stopping_patience > 0 and epochs_without_improvement >= early_stopping_patience:
+            print(
+                f"Early stopping at epoch {epoch_index + 1}/{total_epochs} (best_epoch={best_epoch}, best_metric={best_metric:.6f})",
+                flush=True,
+            )
+            break
+
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+
+    trained_epochs = len(history["train_loss"])
+
+    return TrainingResult(
+        model=model,
+        history=history,
+        device=device,
+        zarr_path=zarr_path,
+        trained_epochs=trained_epochs,
+        best_epoch=best_epoch,
+    )
 
 
 def save_checkpoint(result: TrainingResult, config: TrainingConfig, checkpoint_path: str | Path) -> Path:

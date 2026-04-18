@@ -115,6 +115,36 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--learning-rate", type=float, default=1e-3, help="Optimizer learning rate.")
     train_parser.add_argument("--weight-decay", type=float, default=1e-5, help="Optimizer weight decay.")
     train_parser.add_argument("--device", default="auto", help="Training device: auto, cpu, cuda, or mps.")
+    train_parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=0,
+        help="Stop early after this many epochs without improvement. Set 0 to disable.",
+    )
+    train_parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=0.0,
+        help="Minimum improvement required to reset early-stopping patience.",
+    )
+    train_parser.add_argument(
+        "--checkpoint-every-epochs",
+        type=int,
+        default=0,
+        help="Write intermediate checkpoints every N epochs. Set 0 to disable periodic saves.",
+    )
+    train_parser.add_argument(
+        "--save-best-checkpoint",
+        action="store_true",
+        default=True,
+        help="Save best checkpoint during training to the intermediate checkpoint folder (default: enabled).",
+    )
+    train_parser.add_argument(
+        "--no-save-best-checkpoint",
+        action="store_false",
+        dest="save_best_checkpoint",
+        help="Disable saving best checkpoint during training.",
+    )
     train_parser.add_argument("--checkpoint-path", default=None, help="Optional checkpoint output path.")
 
     experiment_parser = subparsers.add_parser(
@@ -193,6 +223,10 @@ def _build_training_config(args: argparse.Namespace) -> TrainingConfig:
             learning_rate=args.learning_rate,
             weight_decay=args.weight_decay,
             device=args.device,
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_delta=args.early_stopping_min_delta,
+            checkpoint_every_epochs=args.checkpoint_every_epochs,
+            save_best_checkpoint=args.save_best_checkpoint,
         ),
     )
 
@@ -267,12 +301,19 @@ def main() -> None:
 
     if args.command == "train":
         config = _build_training_config(args)
-        result = fit(config)
+        checkpoint_path = Path(args.checkpoint_path) if args.checkpoint_path else None
+        if checkpoint_path is not None:
+            checkpoint_dir = checkpoint_path.parent / f"{checkpoint_path.stem}_checkpoints"
+        else:
+            checkpoint_dir = Path("checkpoints") / "train_checkpoints"
+
+        result = fit(config, checkpoint_dir=checkpoint_dir)
         print(f"Training complete on {result.device}. Final train loss: {result.history['train_loss'][-1]:.6f}")
         if result.history["val_loss"]:
             print(f"Final val loss: {result.history['val_loss'][-1]:.6f}")
-        if args.checkpoint_path:
-            checkpoint = save_checkpoint(result, config, Path(args.checkpoint_path))
+        print(f"Intermediate checkpoints directory: {checkpoint_dir}")
+        if checkpoint_path is not None:
+            checkpoint = save_checkpoint(result, config, checkpoint_path)
             print(f"Saved checkpoint to {checkpoint}")
         if result.zarr_path:
             print(f"Training data store: {result.zarr_path}")

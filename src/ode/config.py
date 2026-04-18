@@ -93,6 +93,10 @@ class OptimizationConfig:
     learning_rate: float = 1e-3
     weight_decay: float = 1e-5
     device: str = "auto"
+    early_stopping_patience: int = 0
+    early_stopping_min_delta: float = 0.0
+    checkpoint_every_epochs: int = 0
+    save_best_checkpoint: bool = True
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "OptimizationConfig":
@@ -101,6 +105,10 @@ class OptimizationConfig:
             learning_rate=float(payload.get("learning_rate", 1e-3)),
             weight_decay=float(payload.get("weight_decay", 1e-5)),
             device=payload.get("device", "auto"),
+            early_stopping_patience=int(payload.get("early_stopping_patience", 0)),
+            early_stopping_min_delta=float(payload.get("early_stopping_min_delta", 0.0)),
+            checkpoint_every_epochs=int(payload.get("checkpoint_every_epochs", 0)),
+            save_best_checkpoint=bool(payload.get("save_best_checkpoint", True)),
         )
 
 

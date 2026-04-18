@@ -340,6 +340,8 @@ def _build_registry_entry(
     config: TrainingConfig,
     final_train_loss: float | None,
     final_val_loss: float | None,
+    trained_epochs: int | None,
+    best_epoch: int | None,
     benchmark_metrics: dict[str, Any] | None,
     original_checkpoint_path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -368,6 +370,11 @@ def _build_registry_entry(
         "teacher_forcing_start_ratio": config.model.teacher_forcing_start_ratio,
         "teacher_forcing_end_ratio": config.model.teacher_forcing_end_ratio,
         "epochs": config.optimization.epochs,
+        "trained_epochs": trained_epochs,
+        "best_epoch": best_epoch,
+        "early_stopping_patience": config.optimization.early_stopping_patience,
+        "early_stopping_min_delta": config.optimization.early_stopping_min_delta,
+        "checkpoint_every_epochs": config.optimization.checkpoint_every_epochs,
         "learning_rate": config.optimization.learning_rate,
         "weight_decay": config.optimization.weight_decay,
         "final_train_loss": final_train_loss,
@@ -403,7 +410,8 @@ def run_tracked_experiment(
         benchmark = load_benchmark_spec(benchmark_path)
         save_json(run_dir / "benchmark.json", asdict(benchmark))
 
-    result = fit(config)
+    checkpoints_dir = run_dir / "checkpoints"
+    result = fit(config, checkpoint_dir=checkpoints_dir)
     checkpoint_path = save_checkpoint(result, config, run_dir / "checkpoint.pt")
     final_train_loss = float(result.history["train_loss"][-1]) if result.history["train_loss"] else None
     final_val_loss = float(result.history["val_loss"][-1]) if result.history["val_loss"] else None
@@ -411,10 +419,13 @@ def run_tracked_experiment(
         "device": result.device,
         "training_data_store": result.zarr_path,
         "checkpoint_path": str(checkpoint_path),
+        "checkpoints_dir": str(checkpoints_dir),
         "train_loss_history": result.history["train_loss"],
         "val_loss_history": result.history["val_loss"],
         "final_train_loss": final_train_loss,
         "final_val_loss": final_val_loss,
+        "trained_epochs": result.trained_epochs,
+        "best_epoch": result.best_epoch,
     }
     save_json(run_dir / "training_summary.json", training_summary)
 
@@ -433,6 +444,8 @@ def run_tracked_experiment(
         config=config,
         final_train_loss=final_train_loss,
         final_val_loss=final_val_loss,
+        trained_epochs=result.trained_epochs,
+        best_epoch=result.best_epoch,
         benchmark_metrics=benchmark_metrics,
     )
     append_registry_entry(registry_path, registry_entry)
@@ -497,6 +510,8 @@ def record_existing_checkpoint(
         config=config,
         final_train_loss=final_train_loss,
         final_val_loss=final_val_loss,
+        trained_epochs=len(train_history) if train_history else None,
+        best_epoch=None,
         benchmark_metrics=benchmark_metrics,
         original_checkpoint_path=source_checkpoint_path,
     )
