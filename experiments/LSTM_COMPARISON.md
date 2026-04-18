@@ -52,7 +52,7 @@ Finding:          Residual skip connections ineffective in PCA-compressed space
 CONVLSTM EXPERIMENT:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-✓ Experiment 5: ConvLSTM + Autoregressive + Scheduled Sampling ★ NEW WINNER
+✓ Experiment 5: ConvLSTM + Autoregressive + Scheduled Sampling ★ CURRENT BEST
 ─────────────────────────────────────────────────────────────────────────────
 SSH RMSE:         0.0635  (-23.5% BETTER than baseline, -15.2% better than best PCA-LSTM)
 Skill vs persist: +0.54
@@ -62,21 +62,33 @@ Key mechanism:    Operates on full spatial fields — preserves all spatial stru
 Run ID:           20260417T171548Z_ssh-u-v_pca32_h64_e100
 
 
+Experiment 6: ConvLSTM + Residual Encoder + Autoregressive + Scheduled Sampling
+──────────────────────────────────────────────────────────────────────────────
+SSH RMSE:         0.0646  (-22.3% better than baseline, +1.7% worse than ConvLSTM baseline)
+Skill vs persist: +0.5221
+Architecture:     ConvLSTM with zero-init residual skip from last input frame
+Teacher forcing:  1.0 → 0.2 linear schedule over 100 epochs
+Early stopping:   patience=12, min_delta=0.0001 (best val_loss at epoch 16, train continued to 100)
+Key finding:      Residual skip in full spatial space adds no benefit
+Run ID:           20260417T211206Z_ssh-u-v_pca32_h64_e100
+
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SUMMARY OF FINDINGS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Baseline SSH RMSE:        0.0830
-Best SSH RMSE:            0.0635  (ConvLSTM)
+Best SSH RMSE:            0.0635  (ConvLSTM baseline)
 Total Improvement:        23.5% error reduction from baseline
 
 Ranking by SSH RMSE (best to worst):
-  1. ConvLSTM + sched. sampling (0.0635)     ← WINNER
-  2. PCA-LSTM sched. sampling (0.0749)       ← PREVIOUS BEST
-  3. Capacity increase PCA64/H192 (0.0823)
-  4. Vanilla baseline (0.0830)               ← BASELINE
-  5. Residual encoder (0.0872)
-  6. Naive autoregressive (0.0892)
+  1. ConvLSTM + sched. sampling (0.0635)        ← WINNER
+  2. ConvLSTM + residual + sched. sampling (0.0646)  (marginally worse)
+  3. PCA-LSTM sched. sampling (0.0749)          ← PREVIOUS BEST
+  4. Capacity increase PCA64/H192 (0.0823)
+  5. Vanilla baseline (0.0830)                  ← BASELINE
+  6. Residual encoder (0.0872)
+  7. Naive autoregressive (0.0892)
 
 
 KEY INSIGHTS

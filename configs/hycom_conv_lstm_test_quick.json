@@ -1,0 +1,41 @@
+{
+  "data": {
+    "paths": ["data/processed/hycom_training_2014-04-02_to_2019-03-03.zarr"],
+    "zarr_path": "data/processed/hycom_training_2014-04-02_to_2019-03-03.zarr",
+    "variables": ["ssh", "u", "v"],
+    "time_dim": "time",
+    "spatial_dims": ["lat", "lon"],
+    "input_steps": 14,
+    "output_steps": 7,
+    "batch_size": 32,
+    "train_fraction": 0.8,
+    "chunks": {
+      "time": 50
+    },
+    "train_date_start": "2014-04-02",
+    "train_date_end": "2018-11-18",
+    "val_date_start": "2018-11-19",
+    "val_date_end": "2019-03-03"
+  },
+  "model": {
+    "pca_components": 32,
+    "lstm_hidden_size": 64,
+    "lstm_layers": 2,
+    "lstm_dropout": 0.1,
+    "autoregressive_decoder": true,
+    "teacher_forcing_start_ratio": 1.0,
+    "teacher_forcing_end_ratio": 0.2,
+    "residual_encoder": true,
+    "use_conv_lstm": true
+  },
+  "optimization": {
+    "epochs": 3,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-5,
+    "device": "mps",
+    "early_stopping_patience": 2,
+    "early_stopping_min_delta": 0.0001,
+    "checkpoint_every_epochs": 1,
+    "save_best_checkpoint": true
+  }
+}

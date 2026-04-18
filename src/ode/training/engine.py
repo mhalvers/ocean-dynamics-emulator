@@ -372,8 +372,16 @@ def fit(config: TrainingConfig, *, checkpoint_dir: str | Path | None = None) -> 
 
     checkpoints_path: Path | None = None
     if checkpoint_dir is not None:
-        checkpoints_path = Path(checkpoint_dir)
-        checkpoints_path.mkdir(parents=True, exist_ok=True)
+        try:
+            checkpoints_path = Path(checkpoint_dir)
+            print(f"[DEBUG] Creating checkpoints directory: {checkpoints_path}", flush=True)
+            checkpoints_path.mkdir(parents=True, exist_ok=True)
+            print(f"[DEBUG] Checkpoints directory created successfully", flush=True)
+        except Exception as e:
+            print(f"[ERROR] Failed to create checkpoints directory: {e}", flush=True)
+            checkpoints_path = None
+    else:
+        print(f"[DEBUG] checkpoint_dir is None - periodic checkpoints and early stopping DISABLED", flush=True)
 
     best_metric: float | None = None
     best_epoch: int | None = None
@@ -466,7 +474,7 @@ def fit(config: TrainingConfig, *, checkpoint_dir: str | Path | None = None) -> 
 
         if early_stopping_patience > 0 and epochs_without_improvement >= early_stopping_patience:
             print(
-                f"Early stopping at epoch {epoch_index + 1}/{total_epochs} (best_epoch={best_epoch}, best_metric={best_metric:.6f})",
+                f"Early stopping at epoch {epoch_index + 1}/{total_epochs} (best_epoch={best_epoch}, best_metric={best_metric:.6f}, patience={early_stopping_patience}, without_improvement={epochs_without_improvement})",
                 flush=True,
             )
             break
